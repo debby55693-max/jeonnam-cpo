@@ -1,4 +1,8 @@
 import streamlit as st
+
+# ✅ 사이드바 기본 펼침 고정
+st.set_page_config(page_title="소상공인 시스템", layout="wide", initial_sidebar_state="expanded")
+
 import runpy
 import sys
 from pathlib import Path
@@ -16,24 +20,16 @@ def _purge_modules(prefixes: list[str]):
 
 def _set_sys_path(app_folder: str):
     """선택된 앱 폴더만 sys.path 최상단으로 올리기"""
-    # 기존에 올려둔 경로 제거
     for folder in ["admin_app", "survey_app"]:
         p = str(ROOT / folder)
         if p in sys.path:
             sys.path.remove(p)
-
-    # 선택 앱을 최상단으로
     sys.path.insert(0, str(ROOT / app_folder))
 
 
 def _run(app_folder: str):
-    # ✅ 모듈 캐시 충돌 방지 (핵심)
     _purge_modules(["pages", "core"])
-
-    # ✅ import 경로를 해당 앱 기준으로 갈아끼움
     _set_sys_path(app_folder)
-
-    # ✅ 해당 앱 엔트리 실행
     runpy.run_path(str(ROOT / app_folder / "app.py"), run_name="__main__")
 
 
