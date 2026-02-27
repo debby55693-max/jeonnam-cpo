@@ -5,20 +5,38 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 
+
+def _purge_modules(prefixes: list[str]):
+    """admin_app ↔ survey_app 전환 시, 같은 이름(pages/core) 모듈 캐시 충돌 방지"""
+    for k in list(sys.modules.keys()):
+        for p in prefixes:
+            if k == p or k.startswith(p + "."):
+                sys.modules.pop(k, None)
+
+
+def _set_sys_path(app_folder: str):
+    """선택된 앱 폴더만 sys.path 최상단으로 올리기"""
+    # 기존에 올려둔 경로 제거
+    for folder in ["admin_app", "survey_app"]:
+        p = str(ROOT / folder)
+        if p in sys.path:
+            sys.path.remove(p)
+
+    # 선택 앱을 최상단으로
+    sys.path.insert(0, str(ROOT / app_folder))
+
+
 def _run(app_folder: str):
-    app_dir = ROOT / app_folder
+    # ✅ 모듈 캐시 충돌 방지 (핵심)
+    _purge_modules(["pages", "core"])
 
-    # 각 앱 폴더를 sys.path에 올려서
-    # admin_app/app.py 안에서 "from core..." 같은 import가 그대로 되게 함
-    p = str(app_dir)
-    if p not in sys.path:
-        sys.path.insert(0, p)
+    # ✅ import 경로를 해당 앱 기준으로 갈아끼움
+    _set_sys_path(app_folder)
 
-    # 해당 앱의 app.py를 "그대로 실행"
-    runpy.run_path(str(app_dir / "app.py"), run_name="__main__")
+    # ✅ 해당 앱 엔트리 실행
+    runpy.run_path(str(ROOT / app_folder / "app.py"), run_name="__main__")
 
 
-# ✅ 여기서는 set_page_config 호출하지 않음 (각 앱에서 이미 하고 있을 가능성이 큼)
 with st.sidebar:
     st.markdown("## 🧭 모드 선택")
     mode = st.radio("", ["관리자/분석", "설문 입력"], index=0, label_visibility="collapsed")
