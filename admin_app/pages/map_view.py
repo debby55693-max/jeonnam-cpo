@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 
+import requests
 import streamlit as st
 import pandas as pd
 
@@ -11,21 +12,18 @@ import folium
 from folium.features import GeoJsonPopup, GeoJsonTooltip
 from streamlit_folium import st_folium
 
-from geojson_loader import load_geojson_from_secrets_or_local
 
-
-# -----------------------------
+# =============================
 # 기본 유틸
-# -----------------------------
+# =============================
 def _to_float(v):
     try:
         if v is None:
             return None
         if isinstance(v, str):
-            s = v.strip()
+            s = v.strip().replace(",", "")
             if s == "":
                 return None
-            s = s.replace(",", "")
             return float(s)
         return float(v)
     except Exception:
@@ -52,73 +50,25 @@ def _pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     return None
 
 
-@st.cache_data(show_spinner=False)
-def _load_geojson(path: str) -> Optional[Dict[str, Any]]:
-    p = Path(path)
-    if not p.exists():
-        return None
-    with p.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _find_project_root(start: Path) -> Path:
-    cur = start.resolve()
-    for _ in range(10):
-        if (cur / "data").exists():
-            return cur
-        cur = cur.parent
-    return start.resolve().parents[1]
-
-
-def _find_data_path(rel_path: str) -> Optional[Path]:
-    here = Path(__file__).resolve()
-    root = _find_project_root(here)
-
-    candidates = [
-        root / "data" / rel_path,
-        root / "admin_app" / "data" / rel_path,
-        root / "survey_app" / "data" / rel_path,
-        here.parents[1] / "data" / rel_path,
-    ]
-    for p in candidates:
-        if p.exists():
-            return p
-    return None
-
-
-def _find_output_path(rel_path: str) -> Optional[Path]:
-    here = Path(__file__).resolve()
-    root = _find_project_root(here)
-    candidates = [
-        root / "output" / rel_path,
-        root / "admin_app" / "output" / rel_path,
-        root / "survey_app" / "output" / rel_path,
-        here.parents[1] / "output" / rel_path,
-    ]
-    for p in candidates:
-        if p.exists():
-            return p
-    return None
-
-
-@st.cache_data(show_spinner=False)
-def _png_to_data_uri(png_path: str) -> Optional[str]:
-    p = Path(png_path)
-    if not p.exists():
-        return None
-    b = p.read_bytes()
-    b64 = base64.b64encode(b).decode("utf-8")
-    return f"data:image/png;base64,{b64}"
-
-
-def _extract_sigungu_name_from_station(station: Optional[str]) -> str:
+def _extract_sigungu_key(station: Optional[str]) -> str:
+    """
+    '무안경찰서' -> '무안' / '목포경찰서' -> '목포'
+    """
     if not station:
         return ""
     s = str(station).strip()
     s = s.replace("전라남도", "").replace("전남", "").strip()
     s = s.replace("경찰서", "").replace("경찰청", "").strip()
-    s = s.replace("군", "").replace("시", "").strip()
-    return s
+    return s.strip()
+
+
+def _station_key_to_sigungu(station_key: str) -> str:
+    """
+    도시(목포/여수/순천/나주/광양)는 '시', 나머지는 '군' 붙여서 시군명과 매칭
+    """
+    if station_key in ["목포", "여수", "순천", "나주", "광양"]:
+        return f"{station_key}시"
+    return f"{station_key}군"
 
 
 def _guess_sigungu_prop(props: Dict[str, Any]) -> str:
@@ -136,23 +86,97 @@ def _guess_sigungu_prop(props: Dict[str, Any]) -> str:
     )
 
 
-def _station_key_to_sigungu(station_key: str) -> str:
-    if not station_key:
-        return ""
-    if station_key in ["목포", "여수", "순천", "나주", "광양"]:
-        return f"{station_key}시"
-    return f"{station_key}군"
+# =============================
+# 경로/로더(배포 대응)
+# =============================
+def _find_project_root(start: Path) -> Path:
+    cur = start.resolve()
+    for _ in range(20):
+        if (cur / "streamlit_app.py").exists() or (cur / "requirements.txt").exists() or (cur / "admin_app").exists():
+            return cur
+        cur = cur.parent
+    return start.resolve().parents[2]
 
 
-# -----------------------------
-# 핫스팟 GeoJSON 로드/조회
-# -----------------------------
+def _find_asset_or_data_path(rel_path: str) -> Optional[Path]:
+    here = Path(__file__).resolve()
+    root = _find_project_root(here)
+    candidates = [
+        root / "assets" / rel_path,
+        root / "data" / rel_path,
+        root / "admin_app" / "assets" / rel_path,
+        root / "admin_app" / "data" / rel_path,
+        here.parents[1] / "assets" / rel_path,
+        here.parents[1] / "data" / rel_path,
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+
+@st.cache_data(show_spinner=False)
+def _load_geojson_path(path: str) -> Optional[Dict[str, Any]]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def _load_geojson_url(url: str) -> Optional[Dict[str, Any]]:
+    try:
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def load_sigungu_geojson() -> Optional[Dict[str, Any]]:
+    # 1) 로컬(assets/data) 우선
+    p = _find_asset_or_data_path("jeonnam_sig.geojson")
+    if p:
+        gj = _load_geojson_path(str(p))
+        if gj:
+            return gj
+
+    # 2) Streamlit Secrets URL
+    for key in ("JEONNAM_SIG_GEOJSON_URL", "JEONNAM_SGG_GEOJSON_URL"):
+        url = st.secrets.get(key)
+        if url:
+            gj = _load_geojson_url(url)
+            if gj:
+                return gj
+    return None
+
+
+def _png_to_data_uri(png_path: str) -> Optional[str]:
+    p = Path(png_path)
+    if not p.exists():
+        return None
+    b64 = base64.b64encode(p.read_bytes()).decode("utf-8")
+    return f"data:image/png;base64,{b64}"
+
+
+# =============================
+# 핫스팟 격자(있으면 표시)
+# =============================
 @st.cache_data(show_spinner=False)
 def _load_hotspot_geojson() -> Optional[Dict[str, Any]]:
-    p = _find_output_path("hotspot_grids.geojson")
-    if not p:
-        return None
-    return _load_geojson(str(p))
+    here = Path(__file__).resolve()
+    root = _find_project_root(here)
+    candidates = [
+        root / "output" / "hotspot_grids.geojson",
+        root / "admin_app" / "output" / "hotspot_grids.geojson",
+        here.parents[1] / "output" / "hotspot_grids.geojson",
+    ]
+    for p in candidates:
+        if p.exists():
+            return _load_geojson_path(str(p))
+    return None
 
 
 def _feature_centroid_latlon(feature: Dict[str, Any]) -> Optional[Tuple[float, float]]:
@@ -184,86 +208,46 @@ def _get_hotspot_feature_by_grid_id(grid_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-# -----------------------------
-# 🟧 핫스팟 격자 레이어
-# -----------------------------
 def _add_hotspot_grid_layer(m: folium.Map, station: Optional[str]):
-    hot = _load_hotspot_geojson()
-    if hot is None:
+    gj = _load_hotspot_geojson()
+    if not gj:
         return
 
-    feats = hot.get("features", []) or []
+    feats = gj.get("features", []) or []
     if not feats:
         return
 
-    station_key = _extract_sigungu_name_from_station(station)
+    station_key = _extract_sigungu_key(station)
     if station_key:
-        target_sigungu = _station_key_to_sigungu(station_key)
-        feats = [ft for ft in feats if (ft.get("properties", {}) or {}).get("sigungu") == target_sigungu]
+        target = _station_key_to_sigungu(station_key)
+        feats = [ft for ft in feats if (ft.get("properties", {}) or {}).get("sigungu") == target]
 
     if not feats:
         return
-
-    need_vals = []
-    for ft in feats:
-        v = (ft.get("properties", {}) or {}).get("need_score")
-        try:
-            if v is not None and v == v:
-                need_vals.append(float(v))
-        except Exception:
-            pass
-    need_vals_sorted = sorted(need_vals)
-
-    def _q(p: float) -> float:
-        if not need_vals_sorted:
-            return 0.0
-        i = int(round((len(need_vals_sorted) - 1) * p))
-        i = max(0, min(len(need_vals_sorted) - 1, i))
-        return float(need_vals_sorted[i])
-
-    q20, q40, q60, q80 = _q(0.2), _q(0.4), _q(0.6), _q(0.8)
-
-    def _color_by_need(v: float) -> str:
-        if not need_vals_sorted:
-            return "#FF7A1A"
-        if v <= q20:
-            return "#FFE6CC"
-        elif v <= q40:
-            return "#FFC999"
-        elif v <= q60:
-            return "#FFA65C"
-        elif v <= q80:
-            return "#FF7A1A"
-        else:
-            return "#D94C00"
 
     def style_function(feature):
-        props = feature.get("properties", {}) or {}
-        v = props.get("need_score", 0)
+        v = (feature.get("properties", {}) or {}).get("need_score", 0)
         try:
             v = float(v)
         except Exception:
             v = 0.0
-        return {
-            "fillColor": _color_by_need(v),
-            "color": "#444444",
-            "weight": 1,
-            "fillOpacity": 0.35,
-        }
+        if v >= 80:
+            fc = "#D94C00"
+        elif v >= 60:
+            fc = "#FF7A1A"
+        elif v >= 40:
+            fc = "#FFA65C"
+        elif v >= 20:
+            fc = "#FFC999"
+        else:
+            fc = "#FFE6CC"
+        return {"fillColor": fc, "color": "#444444", "weight": 1, "fillOpacity": 0.35}
 
     tooltip_fields = ["sigungu", "cnt_store", "need_score", "rank_in_sigungu"]
     tooltip_aliases = ["시군", "점포수", "필요도", "시군내 순위"]
 
-    popup_fields = [
-        "grid_id", "sigungu",
-        "need_score", "rank_in_sigungu",
-        "cnt_store", "cnt_112", "cnt_cctv", "cnt_patrol",
-    ]
-    popup_aliases = [
-        "grid_id", "시군",
-        "필요도", "시군내 순위",
-        "점포수", "112", "CCTV", "탄력",
-    ]
+    popup_fields = ["grid_id", "sigungu", "need_score", "rank_in_sigungu", "cnt_store", "cnt_112", "cnt_cctv", "cnt_patrol"]
+    popup_aliases = ["grid_id", "시군", "필요도", "시군내 순위", "점포수", "112", "CCTV", "탄력"]
 
     layer = folium.GeoJson(
         {"type": "FeatureCollection", "features": feats},
@@ -286,25 +270,22 @@ def _add_selected_grid_highlight(m: folium.Map, grid_id: str):
     folium.GeoJson(ft, name="선택 격자", style_function=style_hi).add_to(m)
 
 
-def map_page(supabase, station: Optional[str], role: str):
-    st.subheader("🗺️ 지도(점포/격자)")
+# =============================
+# 메인 지도
+# =============================
+def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
+    if shops_df is None:
+        shops_df = pd.DataFrame()
 
-    data = (
-        supabase.table("v_shops_priority_ranked")
-        .select("*")
-        .eq("station", station) if station else
-        supabase.table("v_shops_priority_ranked").select("*")
-    ).execute().data or []
+    df0 = shops_df.copy()
 
-    df0 = pd.DataFrame(data)
-
-    base_center_lat, base_center_lon, zoom = 34.9, 126.4, 10
+    base_center_lat, base_center_lon, zoom = 34.816, 126.900, 10
     valid = pd.DataFrame()
 
     if not df0.empty:
-        lat_col = _pick_col(df0, ["lat", "latitude", "y"])
-        lon_primary_col = _pick_col(df0, ["lon", "lng", "longitude", "x"])
-        lon_alt_col = _pick_col(df0, ["long", "lo"])
+        lat_col = _pick_col(df0, ["lat", "LAT", "latitude", "Latitude", "위도", "y", "Y"])
+        lon_primary_col = _pick_col(df0, ["lon", "LON", "longitude", "Longitude"])
+        lon_alt_col = _pick_col(df0, ["lng", "LNG", "경도", "x", "X"])
 
         if lat_col and (lon_primary_col or lon_alt_col):
             df = df0.copy()
@@ -317,7 +298,6 @@ def map_page(supabase, station: Optional[str], role: str):
                 df["__lon"] = df[lon_alt_col].apply(_to_float)
 
             valid = df.dropna(subset=["__lat", "__lon"]).copy()
-
             if not valid.empty:
                 base_center_lat = float(valid["__lat"].mean())
                 base_center_lon = float(valid["__lon"].mean())
@@ -325,11 +305,8 @@ def map_page(supabase, station: Optional[str], role: str):
 
     sel_grid = st.session_state.get("selected_grid_id")
     sel_id = st.session_state.get("selected_shop_id")
-    center_lat, center_lon = base_center_lat, base_center_lon
 
-    if not df0.empty:
-        if "priority_rank" not in df0.columns and "priority_rank_y" in df0.columns:
-            df0["priority_rank"] = df0["priority_rank_y"]
+    center_lat, center_lon = base_center_lat, base_center_lon
 
     if sel_id and (not valid.empty) and ("id" in valid.columns):
         hit = valid[valid["id"].astype(str) == str(sel_id)]
@@ -337,45 +314,28 @@ def map_page(supabase, station: Optional[str], role: str):
             center_lat = float(hit.iloc[0]["__lat"])
             center_lon = float(hit.iloc[0]["__lon"])
             zoom = 16
-    else:
-        if sel_grid:
-            ft = _get_hotspot_feature_by_grid_id(str(sel_grid))
-            if ft:
-                cen = _feature_centroid_latlon(ft)
-                if cen:
-                    center_lat, center_lon = cen
-                    zoom = 16
+    elif sel_grid:
+        ft = _get_hotspot_feature_by_grid_id(str(sel_grid))
+        if ft:
+            cen = _feature_centroid_latlon(ft)
+            if cen:
+                center_lat, center_lon = cen
+                zoom = 16
 
     m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, control_scale=True)
 
-    # ✅ (배포 대응) 시군 경계 GeoJSON: 로컬(data/assets) 우선, 없으면 Streamlit Secrets URL에서 다운로드
-    # - Secrets 키: JEONNAM_SIG_GEOJSON_URL (권장) 또는 JEONNAM_SGG_GEOJSON_URL (호환)
-    gj = load_geojson_from_secrets_or_local(
-        "JEONNAM_SIG_GEOJSON_URL",
-        [
-            "assets/jeonnam_sig.geojson",
-            "data/jeonnam_sig.geojson",
-        ],
-    )
-    if gj is None:
-        gj = load_geojson_from_secrets_or_local(
-            "JEONNAM_SGG_GEOJSON_URL",
-            [
-                "assets/jeonnam_sig.geojson",
-                "data/jeonnam_sig.geojson",
-            ],
-        )
-
+    # ✅ 시군 경계 (배포 대응: assets/data 또는 Secrets URL)
+    gj = load_sigungu_geojson()
     if gj is not None:
         gj_filtered = gj
-        station_key = _extract_sigungu_name_from_station(station)
-
+        station_key = _extract_sigungu_key(station)
         if station_key:
             filtered = []
-            for feature in gj.get("features", []):
+            target = station_key
+            for feature in gj.get("features", []) or []:
                 props = feature.get("properties", {}) or {}
                 nm = _guess_sigungu_prop(props)
-                if nm and (station_key in str(nm)):
+                if nm and (target in str(nm)):
                     filtered.append(feature)
             if filtered:
                 gj_filtered = {"type": "FeatureCollection", "features": filtered}
@@ -383,7 +343,7 @@ def map_page(supabase, station: Optional[str], role: str):
         folium.GeoJson(
             gj_filtered,
             name="시군경계",
-            style_function=lambda x: {"fillOpacity": 0.03, "weight": 6, "color": "#000000"},
+            style_function=lambda _: {"fillOpacity": 0.03, "weight": 6, "color": "#000000"},
         ).add_to(m)
 
     _add_hotspot_grid_layer(m, station)
@@ -392,20 +352,21 @@ def map_page(supabase, station: Optional[str], role: str):
         _add_selected_grid_highlight(m, str(sel_grid))
 
     if not valid.empty:
-        default_icon_file = _find_data_path("icons/shop_default.png")
-        gold_icon_file = _find_data_path("icons/shop_gold.png")
-        silver_icon_file = _find_data_path("icons/shop_silver.png")
-        bronze_icon_file = _find_data_path("icons/shop_bronze.png")
+        default_icon = _find_asset_or_data_path("icons/shop_default.png")
+        gold_icon = _find_asset_or_data_path("icons/shop_gold.png")
+        silver_icon = _find_asset_or_data_path("icons/shop_silver.png")
+        bronze_icon = _find_asset_or_data_path("icons/shop_bronze.png")
 
-        default_icon_uri = _png_to_data_uri(str(default_icon_file)) if default_icon_file else None
-        gold_icon_uri = _png_to_data_uri(str(gold_icon_file)) if gold_icon_file else None
-        silver_icon_uri = _png_to_data_uri(str(silver_icon_file)) if silver_icon_file else None
-        bronze_icon_uri = _png_to_data_uri(str(bronze_icon_file)) if bronze_icon_file else None
-
-        def make_icon(uri, size):
-            if uri:
+        def make_icon(path: Optional[Path], size: int):
+            if not path:
+                return None
+            uri = _png_to_data_uri(str(path))
+            if not uri:
+                return None
+            try:
                 return folium.CustomIcon(uri, icon_size=(size, size), icon_anchor=(size // 2, size // 2))
-            return None
+            except Exception:
+                return None
 
         for _, r in valid.iterrows():
             name = str(r.get("shop_name", "") or "")
@@ -415,20 +376,20 @@ def map_page(supabase, station: Optional[str], role: str):
             rank = _to_int(r.get("priority_rank"), 999)
 
             if rank == 1:
-                icon_use = make_icon(gold_icon_uri, 56)
+                icon_use = make_icon(gold_icon, 56)
             elif rank == 2:
-                icon_use = make_icon(silver_icon_uri, 54)
+                icon_use = make_icon(silver_icon, 54)
             elif rank == 3:
-                icon_use = make_icon(bronze_icon_uri, 52)
+                icon_use = make_icon(bronze_icon, 52)
             else:
-                icon_use = make_icon(default_icon_uri, 46)
+                icon_use = make_icon(default_icon, 46)
 
             popup_html = f"<b>{name}</b><br/>{addr}<br/>순위: {rank}"
 
             folium.Marker(
                 location=[lat, lon],
                 icon=icon_use,
-                tooltip=name,
+                tooltip=name if name else None,
                 popup=folium.Popup(popup_html, max_width=320),
                 z_index_offset=10000,
             ).add_to(m)
@@ -442,7 +403,6 @@ def map_page(supabase, station: Optional[str], role: str):
         key=f"shops_map_{sel_id or sel_grid or 'init'}",
     )
 
-    # ✅ 격자 클릭하면 popup/tooltip에 grid_id가 포함되므로 파싱해서 선택
     try:
         if isinstance(map_state, dict):
             popup_txt = str(map_state.get("last_object_clicked_popup") or "")
@@ -451,7 +411,10 @@ def map_page(supabase, station: Optional[str], role: str):
 
             m_gid = re.search(r"([가-힣]{2}\d{6})", combined)
             if m_gid:
-                st.session_state["selected_grid_id"] = m_gid.group(1)
-                st.rerun()
+                clicked_gid = m_gid.group(1)
+                if str(st.session_state.get("selected_grid_id") or "") != str(clicked_gid):
+                    st.session_state["selected_grid_id"] = str(clicked_gid)
+                    st.session_state["selected_shop_id"] = None
+                    st.rerun()
     except Exception:
         pass
