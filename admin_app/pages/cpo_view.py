@@ -10,162 +10,140 @@ from io import BytesIO
 import hashlib
 import time
 
-from pages.map_view import map_page
+from pages.map_view import map_page as _map_page
 
 
-# -----------------------------
-# map_page 안전 호출 유틸
-# -----------------------------
-def call_map_page(**kwargs):
+# =========================================================
+# 기본 유틸
+# =========================================================
+def safe_str(x, default=""):
     try:
-        sig = inspect.signature(map_page)
-        allowed = set(sig.parameters.keys())
-        filtered = {k: v for k, v in kwargs.items() if k in allowed}
-        return map_page(**filtered)
-    except TypeError:
-        return map_page()
+        if x is None:
+            return default
+        if isinstance(x, float) and pd.isna(x):
+            return default
+        s = str(x)
+        return s
     except Exception:
-        return map_page()
-
-
-# -----------------------------
-# 유틸
-# -----------------------------
-def safe_int(v, default=0):
-    try:
-        if v is None:
-            return default
-        if isinstance(v, float) and pd.isna(v):
-            return default
-        if pd.isna(v):
-            return default
-        return int(float(v))
-    except:
         return default
 
 
-def safe_float(v, default=0.0):
+def safe_int(x, default=0):
     try:
-        if v is None:
+        if x is None:
             return default
-        if isinstance(v, float) and pd.isna(v):
+        if isinstance(x, float) and pd.isna(x):
             return default
-        if pd.isna(v):
-            return default
-        return float(v)
-    except:
+        return int(float(x))
+    except Exception:
         return default
 
 
-def safe_str(v, default=""):
+def safe_float(x, default=0.0):
     try:
-        if v is None:
+        if x is None:
             return default
-        if isinstance(v, float) and pd.isna(v):
+        if isinstance(x, float) and pd.isna(x):
             return default
-        if pd.isna(v):
-            return default
-        return str(v)
-    except:
+        return float(x)
+    except Exception:
         return default
 
 
-def clean_phone(phone: str) -> str:
-    if not phone:
-        return ""
-    digits = re.sub(r"\D", "", phone)
-    if len(digits) == 11 and digits.startswith("010"):
-        return f"{digits[:3]}-{digits[3:7]}-{digits[7:]}"
-    return digits
-
-
-def pick_current_score(shop_row: dict, default: int = 50) -> int:
-    """
-    perceived_safety가 0이어도 정상값으로 인정해야 해서 'or' 금지.
-    """
-    if shop_row.get("perceived_safety") is not None:
-        return safe_int(shop_row.get("perceived_safety"), default)
-    if shop_row.get("subjective_score") is not None:
-        return safe_int(shop_row.get("subjective_score"), default)
-    if shop_row.get("safety_score") is not None:
-        return safe_int(shop_row.get("safety_score"), default)
-    return default
-
-
-# -----------------------------
-# 다운로드/리스트 유틸
-# -----------------------------
-def _gid_key(gid: str) -> str:
-    h = hashlib.md5(str(gid).encode("utf-8")).hexdigest()[:10]
-    return f"gid_{h}"
+def clean_phone(s: str) -> str:
+    s = safe_str(s, "")
+    s = re.sub(r"[^0-9]", "", s)
+    if len(s) == 11 and s.startswith("010"):
+        return f"{s[:3]}-{s[3:7]}-{s[7:]}"
+    if len(s) == 10 and s.startswith("0"):
+        return f"{s[:3]}-{s[3:6]}-{s[6:]}"
+    return s
 
 
 def df_to_xlsx_bytes_safe(df: pd.DataFrame) -> Optional[bytes]:
-    """openpyxl 없으면 None 반환 -> CSV로 대체"""
     try:
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="list")
-        return output.getvalue()
+        bio = BytesIO()
+        with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="data")
+        return bio.getvalue()
     except Exception:
         return None
 
 
-def _fetch_grid_store_list(supabase, grid_id: str) -> tuple[pd.DataFrame, str]:
-    """
-    ✅ 원천 점포리스트(biz_stores) 우선
-    ✅ 없으면 설문등록점포(shops) fallback
-    """
-    gid = str(grid_id).strip()
-
-    # 1) biz_stores(원천) 시도
+def call_map_page(station: str, shops_df: pd.DataFrame):
+    # map_view.map_page는 시그니처가 종종 바뀌어 안전호출
     try:
-        data = (
+        sig = inspect.signature(_map_page)
+        kwargs = {}
+        if "station" in sig.parameters:
+            kwargs["station"] = station
+        if "shops_df" in sig.parameters:
+            kwargs["shops_df"] = shops_df
+        _map_page(**kwargs)
+    except Exception:
+        # 혹시라도 시그니처가 다르면 그냥 기본 호출
+        _map_page(station=station, shops_df=shops_df)
+
+
+# -------------------------
+# grid_id 체크박스 key 안전화
+# -------------------------
+def _gid_key(gid: str) -> str:
+    s = safe_str(gid, "").strip()
+    s = re.sub(r"[^0-9a-zA-Z_-]", "_", s)
+    if s == "":
+        s = "empty"
+    return s
+
+
+# -------------------------
+# DB에서 그리드별 점포리스트 가져오기
+# (biz_stores 테이블 기반 / grid_id로 조회)
+# -------------------------
+def _fetch_grid_store_list(supabase, gid: str):
+    gid = safe_str(gid, "").strip()
+    if not gid:
+        return pd.DataFrame(), "none"
+
+    # 1) biz_stores 우선
+    try:
+        res = (
             supabase.table("biz_stores")
             .select("*")
             .eq("grid_id", gid)
-            .limit(20000)
             .execute()
-            .data
-            or []
         )
+        data = res.data or []
         if data:
-            df = pd.DataFrame(data)
-            return df, "biz_stores"
-        # data가 0이면 그대로 fallback 하지 않고, 빈 df 반환(다운로드 기준을 biz_stores로 보는 게 자연스러움)
-        return pd.DataFrame(), "biz_stores"
+            return pd.DataFrame(data), "biz_stores"
     except Exception:
         pass
 
-    # 2) shops(설문등록) fallback
+    # 2) shops에서 grid_id 있는 경우 fallback
     try:
-        data = (
+        res2 = (
             supabase.table("shops")
-            .select("id, station, grid_id, shop_name, address, phone, tel, owner_phone, lat, lon, updated_at")
+            .select("*")
             .eq("grid_id", gid)
-            .limit(20000)
             .execute()
-            .data
-            or []
         )
-        return (pd.DataFrame(data) if data else pd.DataFrame()), "shops"
+        data2 = res2.data or []
+        if data2:
+            return pd.DataFrame(data2), "shops"
     except Exception:
-        return pd.DataFrame(), "none"
+        pass
+
+    return pd.DataFrame(), "empty"
 
 
 def _normalize_store_df(df: pd.DataFrame, grid_id: str, station: str, source: str) -> pd.DataFrame:
-    """
-    다운로드용 표준 컬럼: 점포명/주소/전화 (+그리드ID)
-    ✅ pandas index 정렬로 '관서/그리드ID'가 NaN 되는 현상 방지
-    """
-    grid_id = ("" if grid_id is None else str(grid_id)).strip()
-
     if df is None or df.empty:
         return pd.DataFrame([{
             "관서": station or "",
             "그리드ID": grid_id,
             "점포명": "",
             "주소": "",
+            "업종": "",
             "전화": "",
             "방문여부(Y/N)": "",
             "담당자": "",
@@ -396,7 +374,7 @@ def cpo_page(supabase, station: str, role: str):
         info = None
         if p:
             info = (
-                f"점포 {dl_cnt} | "  # ✅ 다운로드 기준
+                f"점포 {dl_cnt} | "
                 f"112 {safe_int(p.get('cnt_112'),0)} | "
                 f"5대 {safe_int(p.get('cnt_5crime'),0)} | "
                 f"CCTV {safe_int(p.get('cnt_cctv'),0)} | "
@@ -447,7 +425,7 @@ def cpo_page(supabase, station: str, role: str):
             rows.append({
                 "grid_id": p.get("grid_id"),
                 "need_score": p.get("need_score"),
-                "cnt_store": p.get("cnt_store"),  # (참고용) 화면에는 안 씀
+                "cnt_store": p.get("cnt_store"),
                 "cnt_112": p.get("cnt_112"),
                 "cnt_5crime": p.get("cnt_5crime"),
                 "cnt_cctv": p.get("cnt_cctv"),
@@ -546,7 +524,7 @@ def cpo_page(supabase, station: str, role: str):
                 dl_cnt = int(store_cnt_map.get(grid_id_str, 0))
 
                 info = (
-                    f"점포 {dl_cnt} | "  # ✅ 다운로드 기준
+                    f"점포 {dl_cnt} | "
                     f"112 {safe_int(r.get('cnt_112'),0)} | "
                     f"5대 {safe_int(r.get('cnt_5crime'),0)} | "
                     f"CCTV {safe_int(r.get('cnt_cctv'),0)} | "
@@ -565,7 +543,7 @@ def cpo_page(supabase, station: str, role: str):
                     st.markdown(_cell(info, selected=is_sel), unsafe_allow_html=True)
 
                 with c5:
-                    if st.button("📍 이동", key=f"move_{grid_id_str}_{i}"):
+                    if st.button("📍 이동", key=f"move_{grid_id_str}_{i}", use_container_width=True):
                         st.session_state["selected_grid_id"] = grid_id_str
                         st.session_state["selected_shop_id"] = None
                         st.session_state[f"chk_{_gid_key(grid_id_str)}"] = True
@@ -580,7 +558,7 @@ def cpo_page(supabase, station: str, role: str):
         return
 
     # =========================================================
-    # (기존) TOP5
+    # (기존) TOP5  ✅ 여기만 '한줄 + 모바일 이동 안정화'로 수정됨
     # =========================================================
     st.subheader("🏆 우선순위 TOP5")
 
@@ -594,19 +572,25 @@ def cpo_page(supabase, station: str, role: str):
             top = ranked_df.head(5).copy()
             top["priority_rank"] = range(1, len(top) + 1)
 
+        # ✅ 모바일에서도 한 줄(가로)로 보이게: [순위 | 관서·점포명 | 점수 | 이동]
         for i, r in top.reset_index(drop=True).iterrows():
             shop_id = r.get("id")
-            c1, c2, c3, c4, c5 = st.columns([1, 2, 5, 2, 2])
+
+            rank = safe_int(r.get("priority_rank"), 0)
+            station_name = safe_str(r.get("station"), "")
+            shop_name = safe_str(r.get("shop_name"), "")
+            score = safe_float(r.get("priority_score"), 0.0)
+
+            c1, c2, c3, c4 = st.columns([0.9, 5.5, 1.2, 1.6], vertical_alignment="center")
             with c1:
-                st.write(f"#{safe_int(r.get('priority_rank'), 0)}")
+                st.markdown(f"**#{rank}**")
             with c2:
-                st.write(safe_str(r.get("station"), ""))
+                st.markdown(f"**{station_name}** · {shop_name}")
             with c3:
-                st.write(safe_str(r.get("shop_name"), ""))
+                st.markdown(f"**{score:.1f}**")
             with c4:
-                st.write(f"{safe_float(r.get('priority_score'), 0):.1f}")
-            with c5:
-                if st.button("📍 이동", key=f"top_move_{shop_id}_{i}"):
+                # ✅ 모바일 터치 안정성: 유니크 key + use_container_width
+                if st.button("📍 이동", key=f"top_move_{shop_id}_{i}", use_container_width=True):
                     st.session_state["selected_shop_id"] = str(shop_id)
                     st.rerun()
     else:
