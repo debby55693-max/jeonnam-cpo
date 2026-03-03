@@ -9,21 +9,36 @@ from typing import Optional
 from io import BytesIO
 import hashlib
 import time
+import html
 
-from pages.map_view import map_page as _map_page
+from pages.map_view import map_page
 
 
-# =========================================================
+# -----------------------------
+# map_page 안전 호출 유틸
+# -----------------------------
+def call_map_page(**kwargs):
+    try:
+        sig = inspect.signature(map_page)
+        allowed = set(sig.parameters.keys())
+        filtered = {k: v for k, v in kwargs.items() if k in allowed}
+        return map_page(**filtered)
+    except TypeError:
+        return map_page()
+    except Exception:
+        return map_page()
+
+
+# -----------------------------
 # 기본 유틸
-# =========================================================
+# -----------------------------
 def safe_str(x, default=""):
     try:
         if x is None:
             return default
         if isinstance(x, float) and pd.isna(x):
             return default
-        s = str(x)
-        return s
+        return str(x)
     except Exception:
         return default
 
@@ -70,24 +85,6 @@ def df_to_xlsx_bytes_safe(df: pd.DataFrame) -> Optional[bytes]:
         return None
 
 
-def call_map_page(station: str, shops_df: pd.DataFrame):
-    # map_view.map_page는 시그니처가 종종 바뀌어 안전호출
-    try:
-        sig = inspect.signature(_map_page)
-        kwargs = {}
-        if "station" in sig.parameters:
-            kwargs["station"] = station
-        if "shops_df" in sig.parameters:
-            kwargs["shops_df"] = shops_df
-        _map_page(**kwargs)
-    except Exception:
-        # 혹시라도 시그니처가 다르면 그냥 기본 호출
-        _map_page(station=station, shops_df=shops_df)
-
-
-# -------------------------
-# grid_id 체크박스 key 안전화
-# -------------------------
 def _gid_key(gid: str) -> str:
     s = safe_str(gid, "").strip()
     s = re.sub(r"[^0-9a-zA-Z_-]", "_", s)
@@ -98,7 +95,6 @@ def _gid_key(gid: str) -> str:
 
 # -------------------------
 # DB에서 그리드별 점포리스트 가져오기
-# (biz_stores 테이블 기반 / grid_id로 조회)
 # -------------------------
 def _fetch_grid_store_list(supabase, gid: str):
     gid = safe_str(gid, "").strip()
@@ -161,7 +157,6 @@ def _normalize_store_df(df: pd.DataFrame, grid_id: str, station: str, source: st
     phone_col = pick(["phone", "tel", "owner_phone", "전화번호"])
     cat_col = pick(["category", "업종", "indsLclsNm", "indsMclsNm", "indsSclsNm"])
 
-    # ✅ 핵심: df.index를 가진 out으로 시작해야 스칼라 컬럼이 NaN 안 됨
     out = pd.DataFrame(index=df.index)
 
     out["관서"] = station or ""
@@ -256,7 +251,6 @@ def _get_store_count_download_basis(supabase, gid: str, ttl_sec: int = 300) -> i
 
     cnt = 0
     try:
-        # supabase-py는 count="exact" 지원하는 경우가 많음
         res = (
             supabase.table("biz_stores")
             .select("grid_id", count="exact")
@@ -266,7 +260,6 @@ def _get_store_count_download_basis(supabase, gid: str, ttl_sec: int = 300) -> i
         )
         cnt = getattr(res, "count", None)
         if cnt is None:
-            # 환경별 fallback (count가 안 오면 최소 데이터로 대략)
             data = (res.data or [])
             cnt = len(data)
         cnt = int(cnt)
@@ -282,6 +275,26 @@ def _get_store_count_download_basis(supabase, gid: str, ttl_sec: int = 300) -> i
 # =========================================================
 def cpo_page(supabase, station: str, role: str):
     st.title("🗂️ CPO 관리 (우선순위 / 설문 수정 / 점수 정보 / 진단)")
+
+    # ✅ 모바일에서도 '이동'이 확실히 먹게: URL 파라미터로 이동 처리
+    # - 한 줄 목록에서 '이동'은 링크(<a href='?move_shop=...'>)로 동작
+    try:
+        qp = dict(st.query_params)
+    except Exception:
+        qp = st.experimental_get_query_params()
+
+    move_shop = qp.get("move_shop")
+    if isinstance(move_shop, list):
+        move_shop = move_shop[0] if move_shop else None
+
+    if move_shop:
+        st.session_state["selected_shop_id"] = str(move_shop)
+        # 파라미터 초기화(새로고침/반복 이동 방지)
+        try:
+            st.query_params.clear()
+        except Exception:
+            st.experimental_set_query_params()
+        st.rerun()
 
     # shops 로드 (0건이어도 지도는 표시해야 함)
     try:
@@ -329,7 +342,6 @@ def cpo_page(supabase, station: str, role: str):
 
     # =========================================================
     # ✅ 🟧 격자 우선순위 TOP (상위 10개만 표시)
-    # - 점포수는 '다운로드 기준(DB count)'으로 표시하여 오차 제거
     # =========================================================
     st.subheader("🟧 격자 우선순위 TOP (need_score)")
 
@@ -339,7 +351,6 @@ def cpo_page(supabase, station: str, role: str):
 
     # hotspot 파일 로드
     hot_path = _find_output_file("hotspot_grids.geojson")
-    hot = None
     feats = []
     if hot_path:
         try:
@@ -361,7 +372,6 @@ def cpo_page(supabase, station: str, role: str):
         st.markdown("### 📌 선택 격자(지도 클릭)")
         p = _find_feat_props_by_gid(feats, sel_grid) if feats else None
 
-        # 선택 격자 다운로드 데이터 1번만 준비
         raw_df, sel_src = _fetch_grid_store_list(supabase, str(sel_grid))
         dl_cnt = len(raw_df) if raw_df is not None else 0
 
@@ -369,7 +379,6 @@ def cpo_page(supabase, station: str, role: str):
         sel_xlsx = df_to_xlsx_bytes_safe(sel_out_df)
         sel_csv = sel_out_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
 
-        # 격자 정보 표시(상위목록 스타일)
         need = safe_float(p.get("need_score"), None) if p else None
         info = None
         if p:
@@ -444,32 +453,25 @@ def cpo_page(supabase, station: str, role: str):
             gdf_top = gdf_top[gdf_top["grid_id"] != ""].reset_index(drop=True)
 
             top_gids = gdf_top["grid_id"].tolist()
-
-            # ✅ TOP10에 대한 다운로드 기준 점포수 미리 계산
             store_cnt_map = {gid: _get_store_count_download_basis(supabase, gid) for gid in top_gids}
 
-            # 지도 클릭된 sel_grid는 자동 체크 ON(단, TOP10 안에 있을 때만)
             if sel_grid and str(sel_grid).strip() in top_gids:
                 k = f"chk_{_gid_key(str(sel_grid).strip())}"
                 if k not in st.session_state:
                     st.session_state[k] = True
 
-            # 전체선택(보이는 10개만)
             def _toggle_all():
                 v = st.session_state.get("chk_all_top10", False)
                 for gid in top_gids:
                     st.session_state[f"chk_{_gid_key(gid)}"] = v
 
-            # 초기 전체선택 상태
             if "chk_all_top10" not in st.session_state:
                 st.session_state["chk_all_top10"] = all(
                     st.session_state.get(f"chk_{_gid_key(gid)}", False) for gid in top_gids
                 )
 
-            # 체크된 격자(Top10만)
             checked_gids = [gid for gid in top_gids if st.session_state.get(f"chk_{_gid_key(gid)}", False)]
 
-            # 합본 생성
             combined_df = None
             combined_xlsx = None
             combined_csv = None
@@ -484,7 +486,6 @@ def cpo_page(supabase, station: str, role: str):
 
             sel_hash = hashlib.md5(("|".join(checked_gids)).encode("utf-8")).hexdigest()[:8]
 
-            # 헤더(UI): 점포리스트 다운 + 전체선택
             h = st.columns([1.0, 2.6, 1.3, 3.2, 1.4, 0.6])
             with h[-2]:
                 if combined_df is not None:
@@ -513,7 +514,6 @@ def cpo_page(supabase, station: str, role: str):
 
             st.caption(f"현재 관서 기준 상위 {len(top_gids)}개 격자 — (체크 {len(checked_gids)}개)")
 
-            # 본문 행들 (개별 다운로드 버튼 없음)
             for i, r in gdf_top.iterrows():
                 grid_id_str = _gid_str(r.get("grid_id"))
                 is_sel = (str(sel_grid or "").strip() == grid_id_str)
@@ -522,7 +522,6 @@ def cpo_page(supabase, station: str, role: str):
                 need_txt = f"{float(need):.2f}" if need == need else str(need)
 
                 dl_cnt = int(store_cnt_map.get(grid_id_str, 0))
-
                 info = (
                     f"점포 {dl_cnt} | "
                     f"112 {safe_int(r.get('cnt_112'),0)} | "
@@ -552,13 +551,12 @@ def cpo_page(supabase, station: str, role: str):
                 with c6:
                     st.checkbox("", key=f"chk_{_gid_key(grid_id_str)}", label_visibility="collapsed")
 
-    # ✅ 점포가 없으면, 이후(점포 기반 UI)는 보여줄 수 없으니 여기서 끝.
     if shops_df.empty:
         st.caption("※ 점포(설문)가 등록되면 TOP5/현황표/설문수정/점수정보/진단 기능이 활성화됩니다.")
         return
 
     # =========================================================
-    # (기존) TOP5  ✅ 여기만 '한줄 + 모바일 이동 안정화'로 수정됨
+    # ✅ TOP5 (모바일에서도 무조건 한 줄로)
     # =========================================================
     st.subheader("🏆 우선순위 TOP5")
 
@@ -572,27 +570,62 @@ def cpo_page(supabase, station: str, role: str):
             top = ranked_df.head(5).copy()
             top["priority_rank"] = range(1, len(top) + 1)
 
-        # ✅ 모바일에서도 한 줄(가로)로 보이게: [순위 | 관서·점포명 | 점수 | 이동]
+        st.markdown(
+            """
+            <style>
+            .top5-row {
+              display:flex;
+              align-items:center;
+              gap:10px;
+              padding:10px 12px;
+              border-radius:12px;
+              background: rgba(255, 244, 204, 0.35);
+              margin: 6px 0;
+              flex-wrap: nowrap;           /* ✅ 줄바꿈 금지 */
+              overflow-x: auto;            /* ✅ 길면 가로 스크롤 */
+              -webkit-overflow-scrolling: touch;
+              white-space: nowrap;
+            }
+            .top5-rank { font-weight:800; min-width:42px; }
+            .top5-name { font-weight:700; }
+            .top5-score { font-weight:800; margin-left:auto; }
+            .top5-move {
+              display:inline-flex;
+              align-items:center;
+              justify-content:center;
+              padding:6px 10px;
+              border-radius:10px;
+              border:1px solid rgba(0,0,0,0.15);
+              text-decoration:none;
+              font-weight:700;
+              background: white;
+            }
+            .top5-move:active { transform: scale(0.98); }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
         for i, r in top.reset_index(drop=True).iterrows():
             shop_id = r.get("id")
-
-            rank = safe_int(r.get("priority_rank"), 0)
-            station_name = safe_str(r.get("station"), "")
-            shop_name = safe_str(r.get("shop_name"), "")
+            rank = safe_int(r.get("priority_rank"), i + 1)
+            station_name = html.escape(safe_str(r.get("station"), ""))
+            shop_name = html.escape(safe_str(r.get("shop_name"), ""))
             score = safe_float(r.get("priority_score"), 0.0)
 
-            c1, c2, c3, c4 = st.columns([0.9, 5.5, 1.2, 1.6], vertical_alignment="center")
-            with c1:
-                st.markdown(f"**#{rank}**")
-            with c2:
-                st.markdown(f"**{station_name}** · {shop_name}")
-            with c3:
-                st.markdown(f"**{score:.1f}**")
-            with c4:
-                # ✅ 모바일 터치 안정성: 유니크 key + use_container_width
-                if st.button("📍 이동", key=f"top_move_{shop_id}_{i}", use_container_width=True):
-                    st.session_state["selected_shop_id"] = str(shop_id)
-                    st.rerun()
+            href = f"?move_shop={shop_id}"
+
+            st.markdown(
+                f"""
+                <div class="top5-row">
+                  <span class="top5-rank">#{rank}</span>
+                  <span class="top5-name">{station_name} · {shop_name}</span>
+                  <span class="top5-score">{score:.1f}</span>
+                  <a class="top5-move" href="{href}">📍 이동</a>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
     else:
         st.info("TOP5를 표시할 데이터가 없습니다. (v_shops_priority_ranked 확인)")
 
