@@ -11,6 +11,8 @@ import folium
 from folium.features import GeoJsonPopup, GeoJsonTooltip
 from streamlit_folium import st_folium
 
+from geojson_loader import load_geojson_from_secrets_or_local
+
 
 # -----------------------------
 # 기본 유틸
@@ -242,25 +244,30 @@ def _add_hotspot_grid_layer(m: folium.Map, station: Optional[str]):
             v = float(v)
         except Exception:
             v = 0.0
-        return {"fillColor": _color_by_need(v), "color": "#333333", "weight": 1, "fillOpacity": 0.45}
+        return {
+            "fillColor": _color_by_need(v),
+            "color": "#444444",
+            "weight": 1,
+            "fillOpacity": 0.35,
+        }
 
     tooltip_fields = ["sigungu", "cnt_store", "need_score", "rank_in_sigungu"]
-    tooltip_aliases = ["시군", "점포수", "need_score", "시군내순위"]
+    tooltip_aliases = ["시군", "점포수", "필요도", "시군내 순위"]
 
     popup_fields = [
         "grid_id", "sigungu",
         "need_score", "rank_in_sigungu",
-        "cnt_store", "cnt_112", "cnt_5crime", "cnt_cctv", "cnt_patrol",
+        "cnt_store", "cnt_112", "cnt_cctv", "cnt_patrol",
     ]
     popup_aliases = [
         "grid_id", "시군",
-        "need_score", "시군내순위",
-        "점포수", "112", "5대범죄", "CCTV", "탄력순찰",
+        "필요도", "시군내 순위",
+        "점포수", "112", "CCTV", "탄력",
     ]
 
     layer = folium.GeoJson(
         {"type": "FeatureCollection", "features": feats},
-        name="🟧 상권밀집(상위%) 격자",
+        name="🟧 핫스팟 격자",
         style_function=style_function,
         tooltip=GeoJsonTooltip(fields=tooltip_fields, aliases=tooltip_aliases, sticky=True),
         popup=GeoJsonPopup(fields=popup_fields, aliases=popup_aliases, localize=True, labels=True, max_width=360),
@@ -274,29 +281,30 @@ def _add_selected_grid_highlight(m: folium.Map, grid_id: str):
         return
 
     def style_hi(_):
-        return {"fillColor": "#000000", "color": "#000000", "weight": 4, "fillOpacity": 0.0}
+        return {"fillOpacity": 0.0, "weight": 5, "color": "#00AAFF"}
 
     folium.GeoJson(ft, name="선택 격자", style_function=style_hi).add_to(m)
 
 
-# -----------------------------
-# 메인 지도
-# -----------------------------
-def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
-    if shops_df is None:
-        shops_df = pd.DataFrame()
-    df0 = shops_df.copy()
+def map_page(supabase, station: Optional[str], role: str):
+    st.subheader("🗺️ 지도(점포/격자)")
 
-    base_center_lat = 34.816
-    base_center_lon = 126.900
-    zoom = 10
+    data = (
+        supabase.table("v_shops_priority_ranked")
+        .select("*")
+        .eq("station", station) if station else
+        supabase.table("v_shops_priority_ranked").select("*")
+    ).execute().data or []
 
+    df0 = pd.DataFrame(data)
+
+    base_center_lat, base_center_lon, zoom = 34.9, 126.4, 10
     valid = pd.DataFrame()
 
     if not df0.empty:
-        lat_col = _pick_col(df0, ["lat", "LAT", "latitude", "Latitude", "위도", "y", "Y"])
-        lon_primary_col = _pick_col(df0, ["lon", "LON", "longitude", "Longitude"])
-        lon_alt_col = _pick_col(df0, ["lng", "LNG", "경도", "x", "X"])
+        lat_col = _pick_col(df0, ["lat", "latitude", "y"])
+        lon_primary_col = _pick_col(df0, ["lon", "lng", "longitude", "x"])
+        lon_alt_col = _pick_col(df0, ["long", "lo"])
 
         if lat_col and (lon_primary_col or lon_alt_col):
             df = df0.copy()
@@ -340,8 +348,23 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
 
     m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, control_scale=True)
 
-    geo_file = _find_data_path("jeonnam_sig.geojson")
-    gj = _load_geojson(str(geo_file)) if geo_file else None
+    # ✅ (배포 대응) 시군 경계 GeoJSON: 로컬(data/assets) 우선, 없으면 Streamlit Secrets URL에서 다운로드
+    # - Secrets 키: JEONNAM_SIG_GEOJSON_URL (권장) 또는 JEONNAM_SGG_GEOJSON_URL (호환)
+    gj = load_geojson_from_secrets_or_local(
+        "JEONNAM_SIG_GEOJSON_URL",
+        [
+            "assets/jeonnam_sig.geojson",
+            "data/jeonnam_sig.geojson",
+        ],
+    )
+    if gj is None:
+        gj = load_geojson_from_secrets_or_local(
+            "JEONNAM_SGG_GEOJSON_URL",
+            [
+                "assets/jeonnam_sig.geojson",
+                "data/jeonnam_sig.geojson",
+            ],
+        )
 
     if gj is not None:
         gj_filtered = gj
@@ -428,10 +451,7 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
 
             m_gid = re.search(r"([가-힣]{2}\d{6})", combined)
             if m_gid:
-                clicked_gid = m_gid.group(1)
-                if str(st.session_state.get("selected_grid_id") or "") != str(clicked_gid):
-                    st.session_state["selected_grid_id"] = str(clicked_gid)
-                    st.session_state["selected_shop_id"] = None
-                    st.rerun()
+                st.session_state["selected_grid_id"] = m_gid.group(1)
+                st.rerun()
     except Exception:
         pass
