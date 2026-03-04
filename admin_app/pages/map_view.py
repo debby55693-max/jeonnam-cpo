@@ -86,6 +86,14 @@ def _guess_sigungu_prop(props: Dict[str, Any]) -> str:
     )
 
 
+def _norm_text(s: str) -> str:
+    return (str(s or "")
+            .replace(" ", "")
+            .replace("전라남도", "")
+            .replace("전남", "")
+            .strip())
+
+
 # =============================
 # 경로/로더(배포 대응)
 # =============================
@@ -221,6 +229,92 @@ def _get_hotspot_feature_by_grid_id(grid_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _filter_hotspot_by_station(features: List[Dict[str, Any]], station: Optional[str]) -> List[Dict[str, Any]]:
+    """
+    hotspot features를 관서(시군) 기준으로 필터
+    """
+    if not features:
+        return []
+    station_key = _extract_sigungu_key(station)  # 예: '광양'
+    if not station_key:
+        return features
+
+    target_sigungu = _station_key_to_sigungu(station_key)  # 예: '광양시'
+    sk = _norm_text(station_key)
+    ts = _norm_text(target_sigungu)
+
+    filtered = []
+    for ft in features:
+        p = ft.get("properties", {}) or {}
+        sgg = _norm_text(p.get("sigungu", ""))
+        # 1) '광양시' 포함, 2) '광양' 포함 둘 다 허용
+        if (ts and ts in sgg) or (sk and sk in sgg):
+            filtered.append(ft)
+
+    # 필터가 0개면 안전장치로 필터 해제(기존 너 로직 유지)
+    return filtered if filtered else features
+
+
+def _top5_grid_df_from_features(features: List[Dict[str, Any]], limit: int = 5) -> pd.DataFrame:
+    rows = []
+    for ft in features or []:
+        p = ft.get("properties", {}) or {}
+        gid = str(p.get("grid_id", "") or "").strip()
+        if not gid:
+            continue
+        score = _to_float(p.get("need_score", 0))
+        sgg = str(p.get("sigungu", "") or "").strip()
+        rows.append({"grid_id": gid, "need_score": score if score is not None else 0.0, "sigungu": sgg})
+
+    if not rows:
+        return pd.DataFrame(columns=["grid_id", "need_score", "sigungu"])
+
+    df = pd.DataFrame(rows)
+    df["need_score"] = pd.to_numeric(df["need_score"], errors="coerce").fillna(0.0)
+    df = df.sort_values("need_score", ascending=False).head(limit).reset_index(drop=True)
+    return df
+
+
+def _render_grid_top5_panel(station: Optional[str]):
+    """
+    ✅ (복원) 격자 우선순위 TOP5 목록 + 이동 버튼
+    - 지도 레이어 토글과 무관하게 항상 떠야 하는 영역
+    """
+    gj = _load_hotspot_geojson()
+    feats = (gj.get("features", []) if gj else []) or []
+    feats = _filter_hotspot_by_station(feats, station)
+
+    top5 = _top5_grid_df_from_features(feats, limit=5)
+
+    with st.sidebar.expander("🧩 격자 우선순위 TOP5", expanded=True):
+        if top5.empty:
+            st.caption("표시할 격자가 없습니다. (hotspot_grids.geojson / sigungu 필터 확인)")
+            return
+
+        # 표(가볍게)
+        st.dataframe(
+            top5[["grid_id", "need_score"]],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.divider()
+
+        # 각 격자 이동 버튼(예전 기능 느낌으로 복원)
+        for i, row in top5.iterrows():
+            gid = str(row["grid_id"])
+            score = float(row["need_score"]) if row["need_score"] is not None else 0.0
+
+            c1, c2, c3 = st.columns([3, 2, 2])
+            c1.markdown(f"`{gid}`")
+            c2.markdown(f"{score:.1f}")
+
+            if c3.button("이동", key=f"goto_top5_{gid}"):
+                st.session_state["selected_grid_id"] = gid
+                st.session_state["selected_shop_id"] = None
+                st.rerun()
+
+
 # ✅ 시군별 상위 10%만 남기기(모바일 성능 핵심)
 def _filter_top_percent_by_sigungu(features: List[Dict[str, Any]], top_ratio: float = 0.10) -> List[Dict[str, Any]]:
     if not features:
@@ -273,36 +367,10 @@ def _add_hotspot_grid_layer(m: folium.Map, station: Optional[str]):
         st.caption(f"🟧 핫스팟 격자: features=0 (loaded_from={loaded_from})")
         return
 
-    # ✅ 관서(시군) 필터: 완전일치 말고 포함 매칭(데이터 표기 흔들려도 잡히게)
-    def _norm(s: str) -> str:
-        return (str(s or "")
-                .replace(" ", "")
-                .replace("전라남도", "")
-                .replace("전남", "")
-                .strip())
-
-    station_key = _extract_sigungu_key(station)  # 예: '광양'
-    target_sigungu = _station_key_to_sigungu(station_key) if station_key else ""  # 예: '광양시'
-
     before_cnt = len(feats)
 
-    if station_key:
-        sk = _norm(station_key)
-        ts = _norm(target_sigungu)
-
-        filtered = []
-        for ft in feats:
-            p = ft.get("properties", {}) or {}
-            sgg = _norm(p.get("sigungu", ""))
-
-            # 1) '광양시' 포함, 2) '광양' 포함 둘 다 허용
-            if (ts and ts in sgg) or (sk and sk in sgg):
-                filtered.append(ft)
-
-        # ✅ 필터가 0개면 -> 안전장치로 "필터 해제"
-        if filtered:
-            feats = filtered
-
+    # ✅ 관서(시군) 필터
+    feats = _filter_hotspot_by_station(feats, station)
     after_station_cnt = len(feats)
 
     # ✅ 시군별 상위 10%만
@@ -316,7 +384,7 @@ def _add_hotspot_grid_layer(m: folium.Map, station: Optional[str]):
         )
         return
 
-    # ✅ 디버그 캡션(원인 진단용) — 문제 해결되면 원하면 제거 가능
+    # ✅ 디버그 캡션(원인 진단용)
     st.caption(
         f"🟧 핫스팟 격자 표시: {len(feats)}개 "
         f"(before={before_cnt}, after_station={after_station_cnt}, loaded_from={loaded_from})"
@@ -367,6 +435,9 @@ def _add_selected_grid_highlight(m: folium.Map, grid_id: str):
 def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
     if shops_df is None:
         shops_df = pd.DataFrame()
+
+    # ✅ (복원) 격자 TOP5 목록은 지도/레이어와 무관하게 항상 떠야 함
+    _render_grid_top5_panel(station)
 
     df0 = shops_df.copy()
 
@@ -514,3 +585,5 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
                     st.rerun()
     except Exception:
         pass
+
+    return map_state
