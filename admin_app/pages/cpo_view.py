@@ -1,4 +1,3 @@
-
 import json
 import streamlit as st
 import pandas as pd
@@ -10,7 +9,6 @@ from typing import Optional
 from io import BytesIO
 import hashlib
 import time
-import html
 
 from pages.map_view import map_page
 
@@ -31,116 +29,143 @@ def call_map_page(**kwargs):
 
 
 # -----------------------------
-# 기본 유틸
+# 유틸
 # -----------------------------
-def safe_str(x, default=""):
+def safe_int(v, default=0):
     try:
-        if x is None:
+        if v is None:
             return default
-        if isinstance(x, float) and pd.isna(x):
+        if isinstance(v, float) and pd.isna(v):
             return default
-        return str(x)
-    except Exception:
+        if pd.isna(v):
+            return default
+        return int(float(v))
+    except:
         return default
 
 
-def safe_int(x, default=0):
+def safe_float(v, default=0.0):
     try:
-        if x is None:
+        if v is None:
             return default
-        if isinstance(x, float) and pd.isna(x):
+        if isinstance(v, float) and pd.isna(v):
             return default
-        return int(float(x))
-    except Exception:
+        if pd.isna(v):
+            return default
+        return float(v)
+    except:
         return default
 
 
-def safe_float(x, default=0.0):
+def safe_str(v, default=""):
     try:
-        if x is None:
+        if v is None:
             return default
-        if isinstance(x, float) and pd.isna(x):
+        if isinstance(v, float) and pd.isna(v):
             return default
-        return float(x)
-    except Exception:
+        if pd.isna(v):
+            return default
+        return str(v)
+    except:
         return default
 
 
-def clean_phone(s: str) -> str:
-    s = safe_str(s, "")
-    s = re.sub(r"[^0-9]", "", s)
-    if len(s) == 11 and s.startswith("010"):
-        return f"{s[:3]}-{s[3:7]}-{s[7:]}"
-    if len(s) == 10 and s.startswith("0"):
-        return f"{s[:3]}-{s[3:6]}-{s[6:]}"
-    return s
+def clean_phone(phone: str) -> str:
+    if not phone:
+        return ""
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) == 11 and digits.startswith("010"):
+        return f"{digits[:3]}-{digits[3:7]}-{digits[7:]}"
+    return digits
+
+
+def pick_current_score(shop_row: dict, default: int = 50) -> int:
+    """
+    perceived_safety가 0이어도 정상값으로 인정해야 해서 'or' 금지.
+    """
+    if shop_row.get("perceived_safety") is not None:
+        return safe_int(shop_row.get("perceived_safety"), default)
+    if shop_row.get("subjective_score") is not None:
+        return safe_int(shop_row.get("subjective_score"), default)
+    if shop_row.get("safety_score") is not None:
+        return safe_int(shop_row.get("safety_score"), default)
+    return default
+
+
+# -----------------------------
+# 다운로드/리스트 유틸
+# -----------------------------
+def _gid_key(gid: str) -> str:
+    h = hashlib.md5(str(gid).encode("utf-8")).hexdigest()[:10]
+    return f"gid_{h}"
 
 
 def df_to_xlsx_bytes_safe(df: pd.DataFrame) -> Optional[bytes]:
+    """openpyxl 없으면 None 반환 -> CSV로 대체"""
     try:
-        bio = BytesIO()
-        with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="data")
-        return bio.getvalue()
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="list")
+        return output.getvalue()
     except Exception:
         return None
 
 
-def _gid_key(gid: str) -> str:
-    s = safe_str(gid, "").strip()
-    s = re.sub(r"[^0-9a-zA-Z_-]", "_", s)
-    if s == "":
-        s = "empty"
-    return s
+def _fetch_grid_store_list(supabase, grid_id: str) -> tuple[pd.DataFrame, str]:
+    """
+    ✅ 원천 점포리스트(biz_stores) 우선
+    ✅ 없으면 설문등록점포(shops) fallback
+    """
+    gid = str(grid_id).strip()
 
-
-# -------------------------
-# DB에서 그리드별 점포리스트 가져오기
-# -------------------------
-def _fetch_grid_store_list(supabase, gid: str):
-    gid = safe_str(gid, "").strip()
-    if not gid:
-        return pd.DataFrame(), "none"
-
-    # 1) biz_stores 우선
+    # 1) biz_stores(원천) 시도
     try:
-        res = (
+        data = (
             supabase.table("biz_stores")
             .select("*")
             .eq("grid_id", gid)
+            .limit(20000)
             .execute()
+            .data
+            or []
         )
-        data = res.data or []
         if data:
-            return pd.DataFrame(data), "biz_stores"
+            df = pd.DataFrame(data)
+            return df, "biz_stores"
+        # data가 0이면 그대로 fallback 하지 않고, 빈 df 반환(다운로드 기준을 biz_stores로 보는 게 자연스러움)
+        return pd.DataFrame(), "biz_stores"
     except Exception:
         pass
 
-    # 2) shops에서 grid_id 있는 경우 fallback
+    # 2) shops(설문등록) fallback
     try:
-        res2 = (
+        data = (
             supabase.table("shops")
-            .select("*")
+            .select("id, station, grid_id, shop_name, address, phone, tel, owner_phone, lat, lon, updated_at")
             .eq("grid_id", gid)
+            .limit(20000)
             .execute()
+            .data
+            or []
         )
-        data2 = res2.data or []
-        if data2:
-            return pd.DataFrame(data2), "shops"
+        return (pd.DataFrame(data) if data else pd.DataFrame()), "shops"
     except Exception:
-        pass
-
-    return pd.DataFrame(), "empty"
+        return pd.DataFrame(), "none"
 
 
 def _normalize_store_df(df: pd.DataFrame, grid_id: str, station: str, source: str) -> pd.DataFrame:
+    """
+    다운로드용 표준 컬럼: 점포명/주소/전화 (+그리드ID)
+    ✅ pandas index 정렬로 '관서/그리드ID'가 NaN 되는 현상 방지
+    """
+    grid_id = ("" if grid_id is None else str(grid_id)).strip()
+
     if df is None or df.empty:
         return pd.DataFrame([{
             "관서": station or "",
             "그리드ID": grid_id,
             "점포명": "",
             "주소": "",
-            "업종": "",
             "전화": "",
             "방문여부(Y/N)": "",
             "담당자": "",
@@ -158,6 +183,7 @@ def _normalize_store_df(df: pd.DataFrame, grid_id: str, station: str, source: st
     phone_col = pick(["phone", "tel", "owner_phone", "전화번호"])
     cat_col = pick(["category", "업종", "indsLclsNm", "indsMclsNm", "indsSclsNm"])
 
+    # ✅ 핵심: df.index를 가진 out으로 시작해야 스칼라 컬럼이 NaN 안 됨
     out = pd.DataFrame(index=df.index)
 
     out["관서"] = station or ""
@@ -252,6 +278,7 @@ def _get_store_count_download_basis(supabase, gid: str, ttl_sec: int = 300) -> i
 
     cnt = 0
     try:
+        # supabase-py는 count="exact" 지원하는 경우가 많음
         res = (
             supabase.table("biz_stores")
             .select("grid_id", count="exact")
@@ -277,8 +304,7 @@ def _get_store_count_download_basis(supabase, gid: str, ttl_sec: int = 300) -> i
 def cpo_page(supabase, station: str, role: str):
     st.title("🗂️ CPO 관리 (우선순위 / 설문 수정 / 점수 정보 / 진단)")
 
-    # ✅ 모바일에서도 '이동'이 확실히 먹게: URL 파라미터로 이동 처리
-    # - 한 줄 목록에서 '이동'은 링크(<a href='?move_shop=...'>)로 동작
+    # ✅ (선택) URL 파라미터 이동이 들어오면(모바일) fast mode 켜기
     try:
         qp = dict(st.query_params)
     except Exception:
@@ -290,7 +316,9 @@ def cpo_page(supabase, station: str, role: str):
 
     if move_shop:
         st.session_state["selected_shop_id"] = str(move_shop)
-        # 파라미터 초기화(새로고침/반복 이동 방지)
+        st.session_state["selected_grid_id"] = None
+        # ✅ 이동 직후 1회: 초경량 지도
+        st.session_state["MV_FAST_MODE"] = True
         try:
             st.query_params.clear()
         except Exception:
@@ -333,34 +361,17 @@ def cpo_page(supabase, station: str, role: str):
             if "priority_rank" not in map_df.columns and "priority_rank_view" in map_df.columns:
                 map_df["priority_rank"] = map_df["priority_rank_view"]
 
-# -------------------------------------------------
-# ✅ 지도 지연 로딩 (모바일 속도 개선 핵심)
-# -------------------------------------------------
-    # -------------------------------------------------
-    # ✅ 지도 지연 로딩 (모바일 속도 개선 핵심)
-    # -------------------------------------------------
+    # ✅ 지도는 항상 표시 (map_view에서 fast mode 지원)
     st.subheader("🗺️ 지도")
-
-    if "show_map" not in st.session_state:
-        st.session_state["show_map"] = False
-
-    # 이동 클릭하면 자동으로 지도 켜기
-    if st.session_state.get("selected_shop_id") or st.session_state.get("selected_grid_id"):
-        st.session_state["show_map"] = True
-
-    if not st.session_state["show_map"]:
-        st.info("📍 이동을 누르면 지도를 불러옵니다. (모바일 최적화)")
-        if st.button("🗺️ 지도 보기", key="btn_show_map"):
-            st.session_state["show_map"] = True
-            st.rerun()
-    else:
-        if shops_df.empty:
-            st.info("등록된 점포가 없어도 지도/시군경계/핫스팟 격자는 표시됩니다.")
-        call_map_page(station=station, shops_df=map_df)
+    if shops_df.empty:
+        st.info("등록된 점포(설문)가 없어도 지도/시군경계/핫스팟 격자는 표시됩니다.")
+    call_map_page(station=station, shops_df=map_df)
 
     st.divider()
+
     # =========================================================
     # ✅ 🟧 격자 우선순위 TOP (상위 10개만 표시)
+    # - 점포수는 '다운로드 기준(DB count)'으로 표시하여 오차 제거
     # =========================================================
     st.subheader("🟧 격자 우선순위 TOP (need_score)")
 
@@ -370,6 +381,7 @@ def cpo_page(supabase, station: str, role: str):
 
     # hotspot 파일 로드
     hot_path = _find_output_file("hotspot_grids.geojson")
+    hot = None
     feats = []
     if hot_path:
         try:
@@ -472,6 +484,7 @@ def cpo_page(supabase, station: str, role: str):
             gdf_top = gdf_top[gdf_top["grid_id"] != ""].reset_index(drop=True)
 
             top_gids = gdf_top["grid_id"].tolist()
+
             store_cnt_map = {gid: _get_store_count_download_basis(supabase, gid) for gid in top_gids}
 
             if sel_grid and str(sel_grid).strip() in top_gids:
@@ -541,6 +554,7 @@ def cpo_page(supabase, station: str, role: str):
                 need_txt = f"{float(need):.2f}" if need == need else str(need)
 
                 dl_cnt = int(store_cnt_map.get(grid_id_str, 0))
+
                 info = (
                     f"점포 {dl_cnt} | "
                     f"112 {safe_int(r.get('cnt_112'),0)} | "
@@ -561,10 +575,14 @@ def cpo_page(supabase, station: str, role: str):
                     st.markdown(_cell(info, selected=is_sel), unsafe_allow_html=True)
 
                 with c5:
-                    if st.button("📍 이동", key=f"move_{grid_id_str}_{i}", use_container_width=True):
+                    if st.button("📍 이동", key=f"move_{grid_id_str}_{i}"):
                         st.session_state["selected_grid_id"] = grid_id_str
                         st.session_state["selected_shop_id"] = None
                         st.session_state[f"chk_{_gid_key(grid_id_str)}"] = True
+
+                        # ✅ 이동 직후 1회: 초경량 지도(무한로딩 방지)
+                        st.session_state["MV_FAST_MODE"] = True
+
                         st.rerun()
 
                 with c6:
@@ -575,7 +593,7 @@ def cpo_page(supabase, station: str, role: str):
         return
 
     # =========================================================
-    # ✅ TOP5 (모바일에서도 무조건 한 줄로)
+    # (기존) TOP5
     # =========================================================
     st.subheader("🏆 우선순위 TOP5")
 
@@ -589,62 +607,28 @@ def cpo_page(supabase, station: str, role: str):
             top = ranked_df.head(5).copy()
             top["priority_rank"] = range(1, len(top) + 1)
 
-        st.markdown(
-            """
-            <style>
-            .top5-row {
-              display:flex;
-              align-items:center;
-              gap:10px;
-              padding:10px 12px;
-              border-radius:12px;
-              background: rgba(255, 244, 204, 0.35);
-              margin: 6px 0;
-              flex-wrap: nowrap;           /* ✅ 줄바꿈 금지 */
-              overflow-x: auto;            /* ✅ 길면 가로 스크롤 */
-              -webkit-overflow-scrolling: touch;
-              white-space: nowrap;
-            }
-            .top5-rank { font-weight:800; min-width:42px; }
-            .top5-name { font-weight:700; }
-            .top5-score { font-weight:800; margin-left:auto; }
-            .top5-move {
-              display:inline-flex;
-              align-items:center;
-              justify-content:center;
-              padding:6px 10px;
-              border-radius:10px;
-              border:1px solid rgba(0,0,0,0.15);
-              text-decoration:none;
-              font-weight:700;
-              background: white;
-            }
-            .top5-move:active { transform: scale(0.98); }
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-
         for i, r in top.reset_index(drop=True).iterrows():
             shop_id = r.get("id")
-            rank = safe_int(r.get("priority_rank"), i + 1)
-            station_name = html.escape(safe_str(r.get("station"), ""))
-            shop_name = html.escape(safe_str(r.get("shop_name"), ""))
+
+            rank = safe_int(r.get("priority_rank"), 0)
+            station_name = safe_str(r.get("station"), "")
+            shop_name = safe_str(r.get("shop_name"), "")
             score = safe_float(r.get("priority_score"), 0.0)
 
-            href = f"?move_shop={shop_id}"
-
-            st.markdown(
-                f"""
-                <div class="top5-row">
-                  <span class="top5-rank">#{rank}</span>
-                  <span class="top5-name">{station_name} · {shop_name}</span>
-                  <span class="top5-score">{score:.1f}</span>
-                  <a class="top5-move" href="{href}">📍 이동</a>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            c1, c2, c3, c4 = st.columns([0.9, 5.5, 1.2, 1.6], vertical_alignment="center")
+            with c1:
+                st.markdown(f"**#{rank}**")
+            with c2:
+                st.markdown(f"**{station_name}** · {shop_name}")
+            with c3:
+                st.markdown(f"**{score:.1f}**")
+            with c4:
+                if st.button("📍 이동", key=f"top_move_{shop_id}_{i}", use_container_width=True):
+                    st.session_state["selected_shop_id"] = str(shop_id)
+                    st.session_state["selected_grid_id"] = None
+                    # ✅ 이동 직후 1회: 초경량 지도(무한로딩 방지)
+                    st.session_state["MV_FAST_MODE"] = True
+                    st.rerun()
     else:
         st.info("TOP5를 표시할 데이터가 없습니다. (v_shops_priority_ranked 확인)")
 
@@ -720,6 +704,9 @@ def cpo_page(supabase, station: str, role: str):
                     idx = ev.selection.rows[0]
                     if "id" in view_df.columns:
                         st.session_state["selected_shop_id"] = str(view_df.iloc[idx]["id"])
+                        st.session_state["selected_grid_id"] = None
+                        # ✅ 표 클릭 이동도 마찬가지로 fast mode
+                        st.session_state["MV_FAST_MODE"] = True
             except Exception:
                 pass
 
