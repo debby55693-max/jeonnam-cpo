@@ -1,3 +1,4 @@
+
 import json
 import streamlit as st
 import pandas as pd
@@ -332,10 +333,26 @@ def cpo_page(supabase, station: str, role: str):
             if "priority_rank" not in map_df.columns and "priority_rank_view" in map_df.columns:
                 map_df["priority_rank"] = map_df["priority_rank_view"]
 
-    # ✅ 지도는 항상 표시
-    st.subheader("🗺️ 지도")
+# -------------------------------------------------
+# ✅ 지도 지연 로딩 (모바일 속도 개선 핵심)
+# -------------------------------------------------
+st.subheader("🗺️ 지도")
+
+if "show_map" not in st.session_state:
+    st.session_state["show_map"] = False
+
+# 이동 클릭하면 자동으로 지도 켜기
+if st.session_state.get("selected_shop_id") or st.session_state.get("selected_grid_id"):
+    st.session_state["show_map"] = True
+
+if not st.session_state["show_map"]:
+    st.info("📍 이동을 누르면 지도를 불러옵니다. (모바일 최적화)")
+    if st.button("🗺️ 지도 보기"):
+        st.session_state["show_map"] = True
+        st.rerun()
+else:
     if shops_df.empty:
-        st.info("등록된 점포(설문)가 없어도 지도/시군경계/핫스팟 격자는 표시됩니다.")
+        st.info("등록된 점포가 없어도 지도/시군경계/핫스팟 격자는 표시됩니다.")
     call_map_page(station=station, shops_df=map_df)
 
     st.divider()
