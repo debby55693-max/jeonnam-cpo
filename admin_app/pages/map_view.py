@@ -10,6 +10,7 @@ import pandas as pd
 
 import folium
 from folium.features import GeoJsonPopup, GeoJsonTooltip
+from folium.plugins import MarkerCluster
 from streamlit_folium import st_folium
 
 
@@ -25,6 +26,8 @@ def _to_float(v):
             if s == "":
                 return None
             return float(s)
+        if isinstance(v, float) and pd.isna(v):
+            return None
         return float(v)
     except Exception:
         return None
@@ -115,7 +118,7 @@ def _find_asset_or_data_path(rel_path: str) -> Optional[Path]:
     return None
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)
 def _load_geojson_path(path: str) -> Optional[Dict[str, Any]]:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -124,7 +127,7 @@ def _load_geojson_path(path: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)
 def _load_geojson_url(url: str) -> Optional[Dict[str, Any]]:
     try:
         r = requests.get(url, timeout=30)
@@ -134,7 +137,7 @@ def _load_geojson_url(url: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)
 def load_sigungu_geojson() -> Optional[Dict[str, Any]]:
     # 1) 로컬(assets/data) 우선
     p = _find_asset_or_data_path("jeonnam_sig.geojson")
@@ -153,7 +156,8 @@ def load_sigungu_geojson() -> Optional[Dict[str, Any]]:
     return None
 
 
-def _png_to_data_uri(png_path: str) -> Optional[str]:
+@st.cache_data(show_spinner=False, ttl=3600)
+def _png_to_data_uri_cached(png_path: str) -> Optional[str]:
     p = Path(png_path)
     if not p.exists():
         return None
@@ -164,7 +168,7 @@ def _png_to_data_uri(png_path: str) -> Optional[str]:
 # =============================
 # 핫스팟 격자(있으면 표시)
 # =============================
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)
 def _load_hotspot_geojson() -> Optional[Dict[str, Any]]:
     here = Path(__file__).resolve()
     root = _find_project_root(here)
@@ -208,7 +212,13 @@ def _get_hotspot_feature_by_grid_id(grid_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _add_hotspot_grid_layer(m: folium.Map, station: Optional[str]):
+def _add_hotspot_grid_layer(m: folium.Map, station: Optional[str], selected_grid_id: Optional[str]):
+    """
+    ✅ 모바일 최적화 핵심:
+    - 핫스팟 격자를 '전부' 그리면 폰이 터짐
+    - 관서(시군) 필터 후 need_score 상위 N개만 렌더
+    - 선택된 grid는 상위 N 밖이어도 highlight가 따로 있으니 기능 유지
+    """
     gj = _load_hotspot_geojson()
     if not gj:
         return
@@ -224,6 +234,28 @@ def _add_hotspot_grid_layer(m: folium.Map, station: Optional[str]):
 
     if not feats:
         return
+
+    # ✅ 렌더 제한 (모바일 폭발 방지)
+    # 기본 250개 (필요하면 키로 조절 가능)
+    TOPN = int(st.session_state.get("MV_HOTSPOT_TOPN", 250))
+
+    def _need(ft):
+        try:
+            return float((ft.get("properties", {}) or {}).get("need_score", 0) or 0)
+        except Exception:
+            return 0.0
+
+    feats_sorted = sorted(feats, key=_need, reverse=True)
+    feats_limited = feats_sorted[:TOPN]
+
+    # 선택 grid가 상위N 밖이라도, 레이어에서 팝업 클릭 가능성을 위해 포함시켜주고 싶으면 아래 활성화
+    # (단, 선택 격자 강조는 별도 레이어로 이미 처리됨)
+    if selected_grid_id:
+        sel_ft = _get_hotspot_feature_by_grid_id(str(selected_grid_id))
+        if sel_ft is not None:
+            sel_gid = str((sel_ft.get("properties", {}) or {}).get("grid_id", ""))
+            if sel_gid and all(str((x.get("properties", {}) or {}).get("grid_id", "")) != sel_gid for x in feats_limited):
+                feats_limited = feats_limited + [sel_ft]
 
     def style_function(feature):
         v = (feature.get("properties", {}) or {}).get("need_score", 0)
@@ -241,19 +273,22 @@ def _add_hotspot_grid_layer(m: folium.Map, station: Optional[str]):
             fc = "#FFC999"
         else:
             fc = "#FFE6CC"
-        return {"fillColor": fc, "color": "#444444", "weight": 1, "fillOpacity": 0.35}
+        # ✅ weight를 줄이면 렌더가 가벼워짐
+        return {"fillColor": fc, "color": "#444444", "weight": 0.7, "fillOpacity": 0.30}
 
-    tooltip_fields = ["sigungu", "cnt_store", "need_score", "rank_in_sigungu"]
-    tooltip_aliases = ["시군", "점포수", "필요도", "시군내 순위"]
+    # ✅ Tooltip은 무거움 → fields 최소화 + sticky False
+    tooltip_fields = ["sigungu", "need_score"]
+    tooltip_aliases = ["시군", "필요도"]
 
     popup_fields = ["grid_id", "sigungu", "need_score", "rank_in_sigungu", "cnt_store", "cnt_112", "cnt_cctv", "cnt_patrol"]
     popup_aliases = ["grid_id", "시군", "필요도", "시군내 순위", "점포수", "112", "CCTV", "탄력"]
 
     layer = folium.GeoJson(
-        {"type": "FeatureCollection", "features": feats},
+        {"type": "FeatureCollection", "features": feats_limited},
         name="🟧 핫스팟 격자",
         style_function=style_function,
-        tooltip=GeoJsonTooltip(fields=tooltip_fields, aliases=tooltip_aliases, sticky=True),
+        smooth_factor=2.5,
+        tooltip=GeoJsonTooltip(fields=tooltip_fields, aliases=tooltip_aliases, sticky=False),
         popup=GeoJsonPopup(fields=popup_fields, aliases=popup_aliases, localize=True, labels=True, max_width=360),
     )
     layer.add_to(m)
@@ -267,7 +302,7 @@ def _add_selected_grid_highlight(m: folium.Map, grid_id: str):
     def style_hi(_):
         return {"fillOpacity": 0.0, "weight": 5, "color": "#00AAFF"}
 
-    folium.GeoJson(ft, name="선택 격자", style_function=style_hi).add_to(m)
+    folium.GeoJson(ft, name="선택 격자", style_function=style_hi, smooth_factor=2.0).add_to(m)
 
 
 # =============================
@@ -279,9 +314,11 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
 
     df0 = shops_df.copy()
 
+    # ✅ 기본 중심
     base_center_lat, base_center_lon, zoom = 34.816, 126.900, 10
     valid = pd.DataFrame()
 
+    # ✅ 좌표가 있으면 평균으로 중심 잡기
     if not df0.empty:
         lat_col = _pick_col(df0, ["lat", "LAT", "latitude", "Latitude", "위도", "y", "Y"])
         lon_primary_col = _pick_col(df0, ["lon", "LON", "longitude", "Longitude"])
@@ -308,6 +345,7 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
 
     center_lat, center_lon = base_center_lat, base_center_lon
 
+    # ✅ 선택된 점포 / 선택된 격자 중심 이동
     if sel_id and (not valid.empty) and ("id" in valid.columns):
         hit = valid[valid["id"].astype(str) == str(sel_id)]
         if not hit.empty:
@@ -322,9 +360,10 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
                 center_lat, center_lon = cen
                 zoom = 16
 
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, control_scale=True)
+    # ✅ prefer_canvas=True : 모바일 렌더 약간 개선되는 경우 많음
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, control_scale=True, prefer_canvas=True)
 
-    # ✅ 시군 경계 (배포 대응: assets/data 또는 Secrets URL)
+    # ✅ 시군 경계
     gj = load_sigungu_geojson()
     if gj is not None:
         gj_filtered = gj
@@ -343,24 +382,43 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
         folium.GeoJson(
             gj_filtered,
             name="시군경계",
-            style_function=lambda _: {"fillOpacity": 0.03, "weight": 6, "color": "#000000"},
+            style_function=lambda _: {"fillOpacity": 0.02, "weight": 4, "color": "#000000"},
+            smooth_factor=2.5,
         ).add_to(m)
 
-    _add_hotspot_grid_layer(m, station)
+    # ✅ 핫스팟 격자 (상위 N개만)
+    _add_hotspot_grid_layer(m, station, selected_grid_id=str(sel_grid) if sel_grid else None)
 
+    # ✅ 선택 격자 강조
     if sel_grid:
         _add_selected_grid_highlight(m, str(sel_grid))
 
+    # =========================================================
+    # ✅ 점포 마커 (모바일 최적화 핵심)
+    # - MarkerCluster 적용
+    # - 커스텀 아이콘(base64)은 TOP3만
+    # - 나머지는 CircleMarker(가벼움)
+    # - 너무 많으면 상한 제한
+    # =========================================================
     if not valid.empty:
+        # 최대 렌더 개수 제한 (필요하면 세션에서 조절 가능)
+        MAX_MARKERS = int(st.session_state.get("MV_MAX_MARKERS", 500))
+        if len(valid) > MAX_MARKERS:
+            valid2 = valid.head(MAX_MARKERS).copy()
+        else:
+            valid2 = valid
+
+        # 아이콘 파일 경로
         default_icon = _find_asset_or_data_path("icons/shop_default.png")
         gold_icon = _find_asset_or_data_path("icons/shop_gold.png")
         silver_icon = _find_asset_or_data_path("icons/shop_silver.png")
         bronze_icon = _find_asset_or_data_path("icons/shop_bronze.png")
 
-        def make_icon(path: Optional[Path], size: int):
+        # ✅ CustomIcon은 매우 무거움 → TOP3만 사용하도록 캐시 1번 생성
+        def _make_custom_icon(path: Optional[Path], size: int):
             if not path:
                 return None
-            uri = _png_to_data_uri(str(path))
+            uri = _png_to_data_uri_cached(str(path))
             if not uri:
                 return None
             try:
@@ -368,31 +426,57 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
             except Exception:
                 return None
 
-        for _, r in valid.iterrows():
+        icon_gold = _make_custom_icon(gold_icon, 56)
+        icon_silver = _make_custom_icon(silver_icon, 54)
+        icon_bronze = _make_custom_icon(bronze_icon, 52)
+
+        cluster = MarkerCluster(name="점포(클러스터)").add_to(m)
+
+        for _, r in valid2.iterrows():
             name = str(r.get("shop_name", "") or "")
             addr = str(r.get("address", "") or "")
             lat = float(r["__lat"])
             lon = float(r["__lon"])
             rank = _to_int(r.get("priority_rank"), 999)
 
-            if rank == 1:
-                icon_use = make_icon(gold_icon, 56)
-            elif rank == 2:
-                icon_use = make_icon(silver_icon, 54)
-            elif rank == 3:
-                icon_use = make_icon(bronze_icon, 52)
-            else:
-                icon_use = make_icon(default_icon, 46)
-
             popup_html = f"<b>{name}</b><br/>{addr}<br/>순위: {rank}"
 
-            folium.Marker(
-                location=[lat, lon],
-                icon=icon_use,
-                tooltip=name if name else None,
-                popup=folium.Popup(popup_html, max_width=320),
-                z_index_offset=10000,
-            ).add_to(m)
+            # ✅ TOP3만 커스텀아이콘, 나머지는 CircleMarker로 가볍게
+            if rank == 1 and icon_gold is not None:
+                folium.Marker(
+                    location=[lat, lon],
+                    icon=icon_gold,
+                    tooltip=name if name else None,
+                    popup=folium.Popup(popup_html, max_width=320),
+                    z_index_offset=10000,
+                ).add_to(cluster)
+            elif rank == 2 and icon_silver is not None:
+                folium.Marker(
+                    location=[lat, lon],
+                    icon=icon_silver,
+                    tooltip=name if name else None,
+                    popup=folium.Popup(popup_html, max_width=320),
+                    z_index_offset=9999,
+                ).add_to(cluster)
+            elif rank == 3 and icon_bronze is not None:
+                folium.Marker(
+                    location=[lat, lon],
+                    icon=icon_bronze,
+                    tooltip=name if name else None,
+                    popup=folium.Popup(popup_html, max_width=320),
+                    z_index_offset=9998,
+                ).add_to(cluster)
+            else:
+                # ✅ 초경량
+                folium.CircleMarker(
+                    location=[lat, lon],
+                    radius=5,
+                    weight=1,
+                    fill=True,
+                    fill_opacity=0.8,
+                    tooltip=name if name else None,
+                    popup=folium.Popup(popup_html, max_width=320),
+                ).add_to(cluster)
 
     folium.LayerControl(collapsed=False).add_to(m)
 
@@ -403,6 +487,7 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
         key=f"shops_map_{sel_id or sel_grid or 'init'}",
     )
 
+    # ✅ 격자 클릭 시 grid_id 추출 (기능 유지)
     try:
         if isinstance(map_state, dict):
             popup_txt = str(map_state.get("last_object_clicked_popup") or "")
