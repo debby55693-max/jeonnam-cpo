@@ -9,8 +9,14 @@ import streamlit as st
 import pandas as pd
 
 import folium
-from folium.features import GeoJsonPopup, GeoJsonTooltip
+from folium.features import GeoJsonTooltip
 from streamlit_folium import st_folium
+
+
+# =============================
+# 설정
+# =============================
+DEBUG = False  # True로 하면 캡션(디버그) 표시
 
 
 # =============================
@@ -86,12 +92,14 @@ def _guess_sigungu_prop(props: Dict[str, Any]) -> str:
     )
 
 
-def _norm_text(s: str) -> str:
-    return (str(s or "")
-            .replace(" ", "")
-            .replace("전라남도", "")
-            .replace("전남", "")
-            .strip())
+def _norm(s: str) -> str:
+    return (
+        str(s or "")
+        .replace(" ", "")
+        .replace("전라남도", "")
+        .replace("전남", "")
+        .strip()
+    )
 
 
 # =============================
@@ -178,7 +186,6 @@ def _png_to_data_uri(png_path: str) -> Optional[str]:
 def _load_hotspot_geojson() -> Optional[Dict[str, Any]]:
     """
     hotspot_grids.geojson 파일을 배포/로컬 어디서든 찾기.
-    찾으면 _loaded_from 키에 경로를 넣어서 디버깅 캡션에 표시.
     """
     here = Path(__file__).resolve()
     root = _find_project_root(here)
@@ -232,6 +239,8 @@ def _get_hotspot_feature_by_grid_id(grid_id: str) -> Optional[Dict[str, Any]]:
 def _filter_hotspot_by_station(features: List[Dict[str, Any]], station: Optional[str]) -> List[Dict[str, Any]]:
     """
     hotspot features를 관서(시군) 기준으로 필터
+    - 완전일치가 아니라 포함 매칭(데이터 흔들림 대응)
+    - 필터 결과 0이면 안전장치로 필터 해제
     """
     if not features:
         return []
@@ -240,18 +249,16 @@ def _filter_hotspot_by_station(features: List[Dict[str, Any]], station: Optional
         return features
 
     target_sigungu = _station_key_to_sigungu(station_key)  # 예: '광양시'
-    sk = _norm_text(station_key)
-    ts = _norm_text(target_sigungu)
+    sk = _norm(station_key)
+    ts = _norm(target_sigungu)
 
     filtered = []
     for ft in features:
         p = ft.get("properties", {}) or {}
-        sgg = _norm_text(p.get("sigungu", ""))
-        # 1) '광양시' 포함, 2) '광양' 포함 둘 다 허용
+        sgg = _norm(p.get("sigungu", ""))
         if (ts and ts in sgg) or (sk and sk in sgg):
             filtered.append(ft)
 
-    # 필터가 0개면 안전장치로 필터 해제(기존 너 로직 유지)
     return filtered if filtered else features
 
 
@@ -262,12 +269,11 @@ def _top5_grid_df_from_features(features: List[Dict[str, Any]], limit: int = 5) 
         gid = str(p.get("grid_id", "") or "").strip()
         if not gid:
             continue
-        score = _to_float(p.get("need_score", 0))
-        sgg = str(p.get("sigungu", "") or "").strip()
-        rows.append({"grid_id": gid, "need_score": score if score is not None else 0.0, "sigungu": sgg})
+        score = _to_float(p.get("need_score", 0)) or 0.0
+        rows.append({"grid_id": gid, "need_score": score})
 
     if not rows:
-        return pd.DataFrame(columns=["grid_id", "need_score", "sigungu"])
+        return pd.DataFrame(columns=["grid_id", "need_score"])
 
     df = pd.DataFrame(rows)
     df["need_score"] = pd.to_numeric(df["need_score"], errors="coerce").fillna(0.0)
@@ -275,15 +281,13 @@ def _top5_grid_df_from_features(features: List[Dict[str, Any]], limit: int = 5) 
     return df
 
 
-def _render_grid_top5_panel(station: Optional[str]):
+def _render_grid_top5_sidebar(station: Optional[str]):
     """
-    ✅ (복원) 격자 우선순위 TOP5 목록 + 이동 버튼
-    - 지도 레이어 토글과 무관하게 항상 떠야 하는 영역
+    ✅ (복구) 격자 우선순위 TOP5 — 사이드바 전용
     """
     gj = _load_hotspot_geojson()
     feats = (gj.get("features", []) if gj else []) or []
     feats = _filter_hotspot_by_station(feats, station)
-
     top5 = _top5_grid_df_from_features(feats, limit=5)
 
     with st.sidebar.expander("🧩 격자 우선순위 TOP5", expanded=True):
@@ -291,7 +295,6 @@ def _render_grid_top5_panel(station: Optional[str]):
             st.caption("표시할 격자가 없습니다. (hotspot_grids.geojson / sigungu 필터 확인)")
             return
 
-        # 표(가볍게)
         st.dataframe(
             top5[["grid_id", "need_score"]],
             use_container_width=True,
@@ -300,15 +303,14 @@ def _render_grid_top5_panel(station: Optional[str]):
 
         st.divider()
 
-        # 각 격자 이동 버튼(예전 기능 느낌으로 복원)
-        for i, row in top5.iterrows():
+        # 이동 버튼
+        for _, row in top5.iterrows():
             gid = str(row["grid_id"])
             score = float(row["need_score"]) if row["need_score"] is not None else 0.0
 
             c1, c2, c3 = st.columns([3, 2, 2])
             c1.markdown(f"`{gid}`")
             c2.markdown(f"{score:.1f}")
-
             if c3.button("이동", key=f"goto_top5_{gid}"):
                 st.session_state["selected_grid_id"] = gid
                 st.session_state["selected_shop_id"] = None
@@ -337,7 +339,7 @@ def _filter_top_percent_by_sigungu(features: List[Dict[str, Any]], top_ratio: fl
         except Exception:
             return 0.0
 
-    for sgg, fts in groups.items():
+    for _, fts in groups.items():
         fts_sorted = sorted(fts, key=score_of, reverse=True)
         n = len(fts_sorted)
         k = int(n * top_ratio)
@@ -353,42 +355,26 @@ def _add_hotspot_grid_layer(m: folium.Map, station: Optional[str]):
     🟧 위험도/핫스팟 격자 레이어
     - 관서(시군)로 필터
     - 시군별 상위 10%만 표시
-    - 지도 아래 캡션으로 "왜 안 뜨는지" 원인 표시
     """
     gj = _load_hotspot_geojson()
     if not gj:
-        st.caption("🟧 핫스팟 격자: hotspot_grids.geojson 로드 실패(파일 경로/배포 위치 확인 필요)")
+        if DEBUG:
+            st.caption("🟧 핫스팟 격자: hotspot_grids.geojson 로드 실패(파일 경로/배포 위치 확인 필요)")
         return
 
     feats = gj.get("features", []) or []
-    loaded_from = gj.get("_loaded_from", "unknown")
-
     if not feats:
-        st.caption(f"🟧 핫스팟 격자: features=0 (loaded_from={loaded_from})")
+        if DEBUG:
+            st.caption("🟧 핫스팟 격자: features=0")
         return
 
-    before_cnt = len(feats)
-
-    # ✅ 관서(시군) 필터
     feats = _filter_hotspot_by_station(feats, station)
-    after_station_cnt = len(feats)
-
-    # ✅ 시군별 상위 10%만
     feats = _filter_top_percent_by_sigungu(feats, top_ratio=0.10)
-    after_top_cnt = len(feats)
 
     if not feats:
-        st.caption(
-            f"🟧 핫스팟 격자: 필터 후 0개 "
-            f"(before={before_cnt}, after_station={after_station_cnt}, after_top10%={after_top_cnt}, loaded_from={loaded_from})"
-        )
+        if DEBUG:
+            st.caption("🟧 핫스팟 격자: 필터 후 0개")
         return
-
-    # ✅ 디버그 캡션(원인 진단용)
-    st.caption(
-        f"🟧 핫스팟 격자 표시: {len(feats)}개 "
-        f"(before={before_cnt}, after_station={after_station_cnt}, loaded_from={loaded_from})"
-    )
 
     def style_function(feature):
         v = (feature.get("properties", {}) or {}).get("need_score", 0)
@@ -408,14 +394,12 @@ def _add_hotspot_grid_layer(m: folium.Map, station: Optional[str]):
             fc = "#FFE6CC"
         return {"fillColor": fc, "color": "#444444", "weight": 1, "fillOpacity": 0.35}
 
-    # ✅ 가장 안전한 최소 툴팁(필드 누락으로 레이어가 죽는 것 방지)
-    layer = folium.GeoJson(
+    folium.GeoJson(
         {"type": "FeatureCollection", "features": feats},
         name="🟧 핫스팟 격자(시군 상위10%)",
         style_function=style_function,
         tooltip=GeoJsonTooltip(fields=["grid_id", "need_score"], aliases=["grid", "필요도"], sticky=True),
-    )
-    layer.add_to(m)
+    ).add_to(m)
 
 
 def _add_selected_grid_highlight(m: folium.Map, grid_id: str):
@@ -436,8 +420,8 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
     if shops_df is None:
         shops_df = pd.DataFrame()
 
-    # ✅ (복원) 격자 TOP5 목록은 지도/레이어와 무관하게 항상 떠야 함
-    _render_grid_top5_panel(station)
+    # ✅ (복구) TOP5는 사이드바에 표시
+    _render_grid_top5_sidebar(station)
 
     df0 = shops_df.copy()
 
