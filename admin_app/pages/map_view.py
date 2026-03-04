@@ -16,7 +16,7 @@ from streamlit_folium import st_folium
 # =============================
 # 설정
 # =============================
-DEBUG = False  # True로 하면 캡션(디버그) 표시
+DEBUG = False  # True면 캡션 디버그 표시
 
 
 # =============================
@@ -239,16 +239,16 @@ def _get_hotspot_feature_by_grid_id(grid_id: str) -> Optional[Dict[str, Any]]:
 def _filter_hotspot_by_station(features: List[Dict[str, Any]], station: Optional[str]) -> List[Dict[str, Any]]:
     """
     hotspot features를 관서(시군) 기준으로 필터
-    - 완전일치가 아니라 포함 매칭(데이터 흔들림 대응)
-    - 필터 결과 0이면 안전장치로 필터 해제
+    - 포함 매칭
+    - 0개면 안전장치로 필터 해제
     """
     if not features:
         return []
-    station_key = _extract_sigungu_key(station)  # 예: '광양'
+    station_key = _extract_sigungu_key(station)
     if not station_key:
         return features
 
-    target_sigungu = _station_key_to_sigungu(station_key)  # 예: '광양시'
+    target_sigungu = _station_key_to_sigungu(station_key)
     sk = _norm(station_key)
     ts = _norm(target_sigungu)
 
@@ -281,40 +281,41 @@ def _top5_grid_df_from_features(features: List[Dict[str, Any]], limit: int = 5) 
     return df
 
 
-def _render_grid_top5_sidebar(station: Optional[str]):
+def _render_grid_top5_main_panel(station: Optional[str]):
     """
-    ✅ (복구) 격자 우선순위 TOP5 — 사이드바 전용
+    ✅ TOP5를 '본화면(메인)' 패널에 출력 (Streamlit sidebar 사용 X)
     """
     gj = _load_hotspot_geojson()
     feats = (gj.get("features", []) if gj else []) or []
     feats = _filter_hotspot_by_station(feats, station)
     top5 = _top5_grid_df_from_features(feats, limit=5)
 
-    with st.sidebar.expander("🧩 격자 우선순위 TOP5", expanded=True):
-        if top5.empty:
-            st.caption("표시할 격자가 없습니다. (hotspot_grids.geojson / sigungu 필터 확인)")
-            return
+    st.markdown("### 🧩 격자 우선순위 TOP5")
 
-        st.dataframe(
-            top5[["grid_id", "need_score"]],
-            use_container_width=True,
-            hide_index=True
-        )
+    if top5.empty:
+        st.caption("표시할 격자가 없습니다. (hotspot_grids.geojson / sigungu 필터 확인)")
+        return
 
-        st.divider()
+    st.dataframe(
+        top5[["grid_id", "need_score"]],
+        use_container_width=True,
+        hide_index=True
+    )
 
-        # 이동 버튼
-        for _, row in top5.iterrows():
-            gid = str(row["grid_id"])
-            score = float(row["need_score"]) if row["need_score"] is not None else 0.0
+    st.divider()
 
-            c1, c2, c3 = st.columns([3, 2, 2])
-            c1.markdown(f"`{gid}`")
-            c2.markdown(f"{score:.1f}")
-            if c3.button("이동", key=f"goto_top5_{gid}"):
-                st.session_state["selected_grid_id"] = gid
-                st.session_state["selected_shop_id"] = None
-                st.rerun()
+    # 이동 버튼(예전처럼 유지)
+    for _, row in top5.iterrows():
+        gid = str(row["grid_id"])
+        score = float(row["need_score"]) if row["need_score"] is not None else 0.0
+
+        c1, c2, c3 = st.columns([3, 2, 2])
+        c1.markdown(f"`{gid}`")
+        c2.markdown(f"{score:.1f}")
+        if c3.button("이동", key=f"goto_top5_{gid}"):
+            st.session_state["selected_grid_id"] = gid
+            st.session_state["selected_shop_id"] = None
+            st.rerun()
 
 
 # ✅ 시군별 상위 10%만 남기기(모바일 성능 핵심)
@@ -359,22 +360,25 @@ def _add_hotspot_grid_layer(m: folium.Map, station: Optional[str]):
     gj = _load_hotspot_geojson()
     if not gj:
         if DEBUG:
-            st.caption("🟧 핫스팟 격자: hotspot_grids.geojson 로드 실패(파일 경로/배포 위치 확인 필요)")
+            st.caption("🟧 핫스팟 격자: hotspot_grids.geojson 로드 실패")
         return
 
     feats = gj.get("features", []) or []
     if not feats:
-        if DEBUG:
-            st.caption("🟧 핫스팟 격자: features=0")
         return
 
     feats = _filter_hotspot_by_station(feats, station)
     feats = _filter_top_percent_by_sigungu(feats, top_ratio=0.10)
-
     if not feats:
-        if DEBUG:
-            st.caption("🟧 핫스팟 격자: 필터 후 0개")
         return
+
+    # tooltip 필드 누락 방지(죽지 않게)
+    for ft in feats:
+        p = ft.setdefault("properties", {})
+        if "grid_id" not in p:
+            p["grid_id"] = ""
+        if "need_score" not in p:
+            p["need_score"] = 0
 
     def style_function(feature):
         v = (feature.get("properties", {}) or {}).get("need_score", 0)
@@ -420,8 +424,11 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
     if shops_df is None:
         shops_df = pd.DataFrame()
 
-    # ✅ (복구) TOP5는 사이드바에 표시
-    _render_grid_top5_sidebar(station)
+    # ✅ 본화면 좌(Top5) / 우(지도) 레이아웃
+    col_left, col_right = st.columns([1, 3], gap="large")
+
+    with col_left:
+        _render_grid_top5_main_panel(station)
 
     df0 = shops_df.copy()
 
@@ -468,90 +475,91 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
                 center_lat, center_lon = cen
                 zoom = 16
 
-    # ✅ prefer_canvas=True: 모바일 렌더 성능 개선
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, control_scale=True, prefer_canvas=True)
+    with col_right:
+        # ✅ prefer_canvas=True: 모바일 렌더 성능 개선
+        m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, control_scale=True, prefer_canvas=True)
 
-    # ✅ 시군 경계
-    gj = load_sigungu_geojson()
-    if gj is not None:
-        gj_filtered = gj
-        station_key = _extract_sigungu_key(station)
-        if station_key:
-            filtered = []
-            target = station_key
-            for feature in gj.get("features", []) or []:
-                props = feature.get("properties", {}) or {}
-                nm = _guess_sigungu_prop(props)
-                if nm and (target in str(nm)):
-                    filtered.append(feature)
-            if filtered:
-                gj_filtered = {"type": "FeatureCollection", "features": filtered}
+        # ✅ 시군 경계
+        gj = load_sigungu_geojson()
+        if gj is not None:
+            gj_filtered = gj
+            station_key = _extract_sigungu_key(station)
+            if station_key:
+                filtered = []
+                target = station_key
+                for feature in gj.get("features", []) or []:
+                    props = feature.get("properties", {}) or {}
+                    nm = _guess_sigungu_prop(props)
+                    if nm and (target in str(nm)):
+                        filtered.append(feature)
+                if filtered:
+                    gj_filtered = {"type": "FeatureCollection", "features": filtered}
 
-        folium.GeoJson(
-            gj_filtered,
-            name="시군경계",
-            style_function=lambda _: {"fillOpacity": 0.03, "weight": 6, "color": "#000000"},
-        ).add_to(m)
-
-    # ✅ 🟧 핫스팟/위험도 격자(시군 상위 10%)
-    _add_hotspot_grid_layer(m, station)
-
-    # ✅ 선택 격자 강조
-    if sel_grid:
-        _add_selected_grid_highlight(m, str(sel_grid))
-
-    # ✅ 점포 마커(원래 방식 유지)
-    if not valid.empty:
-        default_icon = _find_asset_or_data_path("icons/shop_default.png")
-        gold_icon = _find_asset_or_data_path("icons/shop_gold.png")
-        silver_icon = _find_asset_or_data_path("icons/shop_silver.png")
-        bronze_icon = _find_asset_or_data_path("icons/shop_bronze.png")
-
-        def make_icon(path: Optional[Path], size: int):
-            if not path:
-                return None
-            uri = _png_to_data_uri(str(path))
-            if not uri:
-                return None
-            try:
-                return folium.CustomIcon(uri, icon_size=(size, size), icon_anchor=(size // 2, size // 2))
-            except Exception:
-                return None
-
-        for _, r in valid.iterrows():
-            name = str(r.get("shop_name", "") or "")
-            addr = str(r.get("address", "") or "")
-            lat = float(r["__lat"])
-            lon = float(r["__lon"])
-            rank = _to_int(r.get("priority_rank"), 999)
-
-            if rank == 1:
-                icon_use = make_icon(gold_icon, 56)
-            elif rank == 2:
-                icon_use = make_icon(silver_icon, 54)
-            elif rank == 3:
-                icon_use = make_icon(bronze_icon, 52)
-            else:
-                icon_use = make_icon(default_icon, 46)
-
-            popup_html = f"<b>{name}</b><br/>{addr}<br/>순위: {rank}"
-
-            folium.Marker(
-                location=[lat, lon],
-                icon=icon_use,
-                tooltip=name if name else None,
-                popup=folium.Popup(popup_html, max_width=320),
-                z_index_offset=10000,
+            folium.GeoJson(
+                gj_filtered,
+                name="시군경계",
+                style_function=lambda _: {"fillOpacity": 0.03, "weight": 6, "color": "#000000"},
             ).add_to(m)
 
-    folium.LayerControl(collapsed=False).add_to(m)
+        # ✅ 🟧 핫스팟/위험도 격자(시군 상위 10%)
+        _add_hotspot_grid_layer(m, station)
 
-    map_state = st_folium(
-        m,
-        height=520,
-        width=None,
-        key=f"shops_map_{sel_id or sel_grid or 'init'}",
-    )
+        # ✅ 선택 격자 강조
+        if sel_grid:
+            _add_selected_grid_highlight(m, str(sel_grid))
+
+        # ✅ 점포 마커(원래 방식 유지)
+        if not valid.empty:
+            default_icon = _find_asset_or_data_path("icons/shop_default.png")
+            gold_icon = _find_asset_or_data_path("icons/shop_gold.png")
+            silver_icon = _find_asset_or_data_path("icons/shop_silver.png")
+            bronze_icon = _find_asset_or_data_path("icons/shop_bronze.png")
+
+            def make_icon(path: Optional[Path], size: int):
+                if not path:
+                    return None
+                uri = _png_to_data_uri(str(path))
+                if not uri:
+                    return None
+                try:
+                    return folium.CustomIcon(uri, icon_size=(size, size), icon_anchor=(size // 2, size // 2))
+                except Exception:
+                    return None
+
+            for _, r in valid.iterrows():
+                name = str(r.get("shop_name", "") or "")
+                addr = str(r.get("address", "") or "")
+                lat = float(r["__lat"])
+                lon = float(r["__lon"])
+                rank = _to_int(r.get("priority_rank"), 999)
+
+                if rank == 1:
+                    icon_use = make_icon(gold_icon, 56)
+                elif rank == 2:
+                    icon_use = make_icon(silver_icon, 54)
+                elif rank == 3:
+                    icon_use = make_icon(bronze_icon, 52)
+                else:
+                    icon_use = make_icon(default_icon, 46)
+
+                popup_html = f"<b>{name}</b><br/>{addr}<br/>순위: {rank}"
+
+                folium.Marker(
+                    location=[lat, lon],
+                    icon=icon_use,
+                    tooltip=name if name else None,
+                    popup=folium.Popup(popup_html, max_width=320),
+                    z_index_offset=10000,
+                ).add_to(m)
+
+        folium.LayerControl(collapsed=False).add_to(m)
+
+        map_state = st_folium(
+            m,
+            height=520,
+            width=None,
+            key=f"shops_map_{sel_id or sel_grid or 'init'}",
+        )
 
     # ✅ 격자 클릭 → grid_id 추출
     try:
