@@ -51,9 +51,6 @@ def _pick_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
 
 
 def _extract_sigungu_key(station: Optional[str]) -> str:
-    """
-    '무안경찰서' -> '무안' / '목포경찰서' -> '목포'
-    """
     if not station:
         return ""
     s = str(station).strip()
@@ -63,9 +60,6 @@ def _extract_sigungu_key(station: Optional[str]) -> str:
 
 
 def _station_key_to_sigungu(station_key: str) -> str:
-    """
-    도시(목포/여수/순천/나주/광양)는 '시', 나머지는 '군' 붙여서 시군명과 매칭
-    """
     if station_key in ["목포", "여수", "순천", "나주", "광양"]:
         return f"{station_key}시"
     return f"{station_key}군"
@@ -136,14 +130,12 @@ def _load_geojson_url(url: str) -> Optional[Dict[str, Any]]:
 
 @st.cache_data(show_spinner=False)
 def load_sigungu_geojson() -> Optional[Dict[str, Any]]:
-    # 1) 로컬(assets/data) 우선
     p = _find_asset_or_data_path("jeonnam_sig.geojson")
     if p:
         gj = _load_geojson_path(str(p))
         if gj:
             return gj
 
-    # 2) Streamlit Secrets URL
     for key in ("JEONNAM_SIG_GEOJSON_URL", "JEONNAM_SGG_GEOJSON_URL"):
         url = st.secrets.get(key)
         if url:
@@ -308,11 +300,14 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
 
     center_lat, center_lon = base_center_lat, base_center_lon
 
+    # 선택 점포를 찾기(FAST에서도 1개 마커 찍기 위해)
+    selected_row = None
     if sel_id and (not valid.empty) and ("id" in valid.columns):
         hit = valid[valid["id"].astype(str) == str(sel_id)]
         if not hit.empty:
-            center_lat = float(hit.iloc[0]["__lat"])
-            center_lon = float(hit.iloc[0]["__lon"])
+            selected_row = hit.iloc[0]
+            center_lat = float(selected_row["__lat"])
+            center_lon = float(selected_row["__lon"])
             zoom = 16
     elif sel_grid:
         ft = _get_hotspot_feature_by_grid_id(str(sel_grid))
@@ -322,7 +317,6 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
                 center_lat, center_lon = cen
                 zoom = 16
 
-    # ✅ 이동 직후 1회: 초경량 지도 모드 (무한로딩 방지)
     fast_mode = bool(st.session_state.get("MV_FAST_MODE", False))
     if fast_mode:
         c1, c2 = st.columns([1, 3])
@@ -331,9 +325,8 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
                 st.session_state["MV_FAST_MODE"] = False
                 st.rerun()
         with c2:
-            st.caption("모바일 최적화: 먼저 빠르게 위치만 띄우고(경계/선택), 원할 때 상세(격자/점포)를 켭니다.")
+            st.caption("모바일 최적화: 먼저 빠르게 이동 위치만 표시(선택 1개), 원할 때 전체(격자/점포) 표시")
 
-    # prefer_canvas=True : 모바일 렌더 안정성 향상되는 경우 많음
     m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, control_scale=True, prefer_canvas=True)
 
     # ✅ 시군 경계
@@ -358,55 +351,74 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
             style_function=lambda _: {"fillOpacity": 0.03, "weight": 6, "color": "#000000"},
         ).add_to(m)
 
-    # ✅ 핫스팟/점포는 fast_mode일 때는 생략(초경량)
-    if not fast_mode:
-        _add_hotspot_grid_layer(m, station)
-
+    # ✅ FAST 모드에서도 "선택 격자 강조"는 보여줌
     if sel_grid:
         _add_selected_grid_highlight(m, str(sel_grid))
 
-    if (not fast_mode) and (not valid.empty):
-        default_icon = _find_asset_or_data_path("icons/shop_default.png")
-        gold_icon = _find_asset_or_data_path("icons/shop_gold.png")
-        silver_icon = _find_asset_or_data_path("icons/shop_silver.png")
-        bronze_icon = _find_asset_or_data_path("icons/shop_bronze.png")
-
-        def make_icon(path: Optional[Path], size: int):
-            if not path:
-                return None
-            uri = _png_to_data_uri(str(path))
-            if not uri:
-                return None
-            try:
-                return folium.CustomIcon(uri, icon_size=(size, size), icon_anchor=(size // 2, size // 2))
-            except Exception:
-                return None
-
-        for _, r in valid.iterrows():
-            name = str(r.get("shop_name", "") or "")
-            addr = str(r.get("address", "") or "")
-            lat = float(r["__lat"])
-            lon = float(r["__lon"])
-            rank = _to_int(r.get("priority_rank"), 999)
-
-            if rank == 1:
-                icon_use = make_icon(gold_icon, 56)
-            elif rank == 2:
-                icon_use = make_icon(silver_icon, 54)
-            elif rank == 3:
-                icon_use = make_icon(bronze_icon, 52)
-            else:
-                icon_use = make_icon(default_icon, 46)
-
-            popup_html = f"<b>{name}</b><br/>{addr}<br/>순위: {rank}"
+    # ✅ FAST 모드일 때도 "선택 점포 마커 1개"는 즉시 표시
+    if fast_mode and (selected_row is not None):
+        try:
+            name = str(selected_row.get("shop_name", "") or "")
+            addr = str(selected_row.get("address", "") or "")
+            lat = float(selected_row["__lat"])
+            lon = float(selected_row["__lon"])
+            popup_html = f"<b>{name}</b><br/>{addr}"
 
             folium.Marker(
                 location=[lat, lon],
-                icon=icon_use,
                 tooltip=name if name else None,
                 popup=folium.Popup(popup_html, max_width=320),
-                z_index_offset=10000,
+                z_index_offset=20000,
             ).add_to(m)
+        except Exception:
+            pass
+
+    # ✅ 상세 레이어(핫스팟/전체 점포)는 fast_mode가 꺼졌을 때만
+    if not fast_mode:
+        _add_hotspot_grid_layer(m, station)
+
+        if not valid.empty:
+            default_icon = _find_asset_or_data_path("icons/shop_default.png")
+            gold_icon = _find_asset_or_data_path("icons/shop_gold.png")
+            silver_icon = _find_asset_or_data_path("icons/shop_silver.png")
+            bronze_icon = _find_asset_or_data_path("icons/shop_bronze.png")
+
+            def make_icon(path: Optional[Path], size: int):
+                if not path:
+                    return None
+                uri = _png_to_data_uri(str(path))
+                if not uri:
+                    return None
+                try:
+                    return folium.CustomIcon(uri, icon_size=(size, size), icon_anchor=(size // 2, size // 2))
+                except Exception:
+                    return None
+
+            for _, r in valid.iterrows():
+                name = str(r.get("shop_name", "") or "")
+                addr = str(r.get("address", "") or "")
+                lat = float(r["__lat"])
+                lon = float(r["__lon"])
+                rank = _to_int(r.get("priority_rank"), 999)
+
+                if rank == 1:
+                    icon_use = make_icon(gold_icon, 56)
+                elif rank == 2:
+                    icon_use = make_icon(silver_icon, 54)
+                elif rank == 3:
+                    icon_use = make_icon(bronze_icon, 52)
+                else:
+                    icon_use = make_icon(default_icon, 46)
+
+                popup_html = f"<b>{name}</b><br/>{addr}<br/>순위: {rank}"
+
+                folium.Marker(
+                    location=[lat, lon],
+                    icon=icon_use,
+                    tooltip=name if name else None,
+                    popup=folium.Popup(popup_html, max_width=320),
+                    z_index_offset=10000,
+                ).add_to(m)
 
     folium.LayerControl(collapsed=False).add_to(m)
 
@@ -417,7 +429,7 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
         key=f"shops_map_{sel_id or sel_grid or 'init'}",
     )
 
-    # ✅ 격자 클릭 시 grid_id 추출 (기능 유지)
+    # ✅ 격자 클릭 시 grid_id 추출
     try:
         if isinstance(map_state, dict):
             popup_txt = str(map_state.get("last_object_clicked_popup") or "")
@@ -430,7 +442,6 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
                 if str(st.session_state.get("selected_grid_id") or "") != str(clicked_gid):
                     st.session_state["selected_grid_id"] = str(clicked_gid)
                     st.session_state["selected_shop_id"] = None
-                    # ✅ 클릭 이동도 fast_mode로 한번 보호
                     st.session_state["MV_FAST_MODE"] = True
                     st.rerun()
     except Exception:
