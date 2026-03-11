@@ -1,4 +1,3 @@
-# admin_app/app.py
 import streamlit as st
 
 from core.auth import login_ui
@@ -44,19 +43,25 @@ def main():
     # 2. Admin만 경찰서 선택 후 진입
     # =============================
     if role == "admin":
+        # 예전 위젯 상태("전체" 자동선택) 강제 초기화 1회
+        if "__admin_station_filter_reset_v2" not in st.session_state:
+            st.session_state.pop("admin_station_filter", None)
+            st.session_state.pop("admin_station_filter_v2", None)
+            st.session_state["__admin_station_filter_reset_v2"] = True
+
         st.sidebar.markdown("---")
         st.sidebar.subheader("🏢 경찰서 선택")
 
-        station_options = ["선택하세요", "전체"] + JEONNAM_POLICE_STATIONS
+        station_options = ["선택하세요"] + JEONNAM_POLICE_STATIONS + ["전체"]
 
         selected_station = st.sidebar.selectbox(
             "조회할 경찰서",
             station_options,
             index=0,
-            key="admin_station_filter",
+            key="admin_station_filter_v2",
         )
 
-        # 처음 진입 시 아무것도 안 띄우고 관서 선택 유도
+        # 관서 선택 전에는 화면 진입 막기
         if selected_station == "선택하세요":
             st.title("🗂️ CPO 관리")
             st.info("왼쪽 사이드바에서 조회할 경찰서를 선택하세요.")
