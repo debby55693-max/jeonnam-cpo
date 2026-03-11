@@ -1,3 +1,4 @@
+# admin_app/app.py
 import streamlit as st
 
 from core.auth import login_ui
@@ -6,6 +7,7 @@ from pages.cpo_view import cpo_page
 
 # 전남 22개 경찰서 (필터용)
 JEONNAM_POLICE_STATIONS = [
+    "전체",
     "목포경찰서", "여수경찰서", "순천경찰서", "나주경찰서", "광양경찰서",
     "고흥경찰서", "해남경찰서", "무안경찰서", "장흥경찰서", "보성경찰서",
     "영광경찰서", "화순경찰서", "함평경찰서", "영암경찰서", "장성경찰서",
@@ -13,6 +15,7 @@ JEONNAM_POLICE_STATIONS = [
     "구례경찰서", "신안경찰서",
 ]
 
+# streamlit_app.py에서 set_page_config를 이미 호출했으면 여기서 에러가 날 수 있어 방지
 try:
     st.set_page_config(
         page_title="소상공인 방범물품 지원",
@@ -33,6 +36,7 @@ def main():
     access_token = session["access_token"]
     user = session["user"]
 
+    # refresh_token까지 전달 (배포/세션 안정화)
     refresh_token = st.session_state.get("refresh_token")
     supabase = get_authed_client(access_token, refresh_token)
 
@@ -40,35 +44,21 @@ def main():
     my_station = user.get("station")
 
     # =============================
-    # 2. Admin만 경찰서 선택 후 진입
+    # 2. Admin만 경찰서 필터
     # =============================
     if role == "admin":
-        # 예전 위젯 상태("전체" 자동선택) 강제 초기화 1회
-        if "__admin_station_filter_reset_v2" not in st.session_state:
-            st.session_state.pop("admin_station_filter", None)
-            st.session_state.pop("admin_station_filter_v2", None)
-            st.session_state["__admin_station_filter_reset_v2"] = True
-
         st.sidebar.markdown("---")
         st.sidebar.subheader("🏢 경찰서 선택")
 
-        station_options = ["선택하세요"] + JEONNAM_POLICE_STATIONS + ["전체"]
-
         selected_station = st.sidebar.selectbox(
             "조회할 경찰서",
-            station_options,
-            index=0,
-            key="admin_station_filter_v2",
+            JEONNAM_POLICE_STATIONS,
+            index=0,  # 기본: 전체
+            key="admin_station_filter",
         )
 
-        # 관서 선택 전에는 화면 진입 막기
-        if selected_station == "선택하세요":
-            st.title("🗂️ CPO 관리")
-            st.info("왼쪽 사이드바에서 조회할 경찰서를 선택하세요.")
-            st.stop()
-
+        # 전체 선택 시 → None 처리
         station = None if selected_station == "전체" else selected_station
-
     else:
         # CPO는 무조건 본인 관서
         station = my_station
