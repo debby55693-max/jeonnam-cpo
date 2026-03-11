@@ -1,3 +1,4 @@
+# admin_app/app.py
 import streamlit as st
 
 from core.auth import login_ui
