@@ -356,7 +356,9 @@ def cpo_page(supabase, station: str, role: str):
 
     try:
         q = supabase.table("shops").select("*").order("updated_at", desc=True)
-        if role == "cpo" and station:
+        # 관리자도 선택한 관서 기준으로 동일하게 필터
+        # station=None 인 경우만 전체 조회
+        if station:
             q = q.eq("station", station)
         shops = q.execute().data or []
     except Exception as e:
