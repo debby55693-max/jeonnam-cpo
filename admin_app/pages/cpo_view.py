@@ -1,15 +1,15 @@
 import json
+import math
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 import re
 import inspect
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict, Any, Tuple
 from io import BytesIO
 import hashlib
 import time
-import math
 
 from pages.map_view import map_page
 
@@ -41,7 +41,7 @@ def safe_int(v, default=0):
         if pd.isna(v):
             return default
         return int(float(v))
-    except:
+    except Exception:
         return default
 
 
@@ -54,7 +54,7 @@ def safe_float(v, default=0.0):
         if pd.isna(v):
             return default
         return float(v)
-    except:
+    except Exception:
         return default
 
 
@@ -67,7 +67,7 @@ def safe_str(v, default=""):
         if pd.isna(v):
             return default
         return str(v)
-    except:
+    except Exception:
         return default
 
 
@@ -112,14 +112,12 @@ def df_to_xlsx_bytes_safe(df: pd.DataFrame) -> Optional[bytes]:
         return None
 
 
-def _fetch_grid_store_list(supabase, grid_id: str) -> tuple[pd.DataFrame, str]:
+def _fetch_grid_store_list(supabase, grid_id: str) -> Tuple[pd.DataFrame, str]:
     """
-    ✅ 원천 점포리스트(biz_stores) 우선
-    ✅ 없으면 설문등록점포(shops) fallback
+    원천 점포리스트(biz_stores) 우선, 없으면 shops fallback
     """
     gid = str(grid_id).strip()
 
-    # 1) biz_stores(원천) 시도
     try:
         data = (
             supabase.table("biz_stores")
@@ -131,14 +129,11 @@ def _fetch_grid_store_list(supabase, grid_id: str) -> tuple[pd.DataFrame, str]:
             or []
         )
         if data:
-            df = pd.DataFrame(data)
-            return df, "biz_stores"
-        # data가 0이면 그대로 fallback 하지 않고, 빈 df 반환(다운로드 기준을 biz_stores로 보는 게 자연스러움)
+            return pd.DataFrame(data), "biz_stores"
         return pd.DataFrame(), "biz_stores"
     except Exception:
         pass
 
-    # 2) shops(설문등록) fallback
     try:
         data = (
             supabase.table("shops")
@@ -157,21 +152,22 @@ def _fetch_grid_store_list(supabase, grid_id: str) -> tuple[pd.DataFrame, str]:
 def _normalize_store_df(df: pd.DataFrame, grid_id: str, station: str, source: str) -> pd.DataFrame:
     """
     다운로드용 표준 컬럼: 점포명/주소/전화 (+그리드ID)
-    ✅ pandas index 정렬로 '관서/그리드ID'가 NaN 되는 현상 방지
     """
     grid_id = ("" if grid_id is None else str(grid_id)).strip()
 
     if df is None or df.empty:
-        return pd.DataFrame([{
-            "관서": station or "",
-            "그리드ID": grid_id,
-            "점포명": "",
-            "주소": "",
-            "전화": "",
-            "방문여부(Y/N)": "",
-            "담당자": "",
-            "비고": f"source={source}",
-        }])
+        return pd.DataFrame([
+            {
+                "관서": station or "",
+                "그리드ID": grid_id,
+                "점포명": "",
+                "주소": "",
+                "전화": "",
+                "방문여부(Y/N)": "",
+                "담당자": "",
+                "비고": f"source={source}",
+            }
+        ])
 
     def pick(cands):
         for c in cands:
@@ -184,9 +180,7 @@ def _normalize_store_df(df: pd.DataFrame, grid_id: str, station: str, source: st
     phone_col = pick(["phone", "tel", "owner_phone", "전화번호"])
     cat_col = pick(["category", "업종", "indsLclsNm", "indsMclsNm", "indsSclsNm"])
 
-    # ✅ 핵심: df.index를 가진 out으로 시작해야 스칼라 컬럼이 NaN 안 됨
     out = pd.DataFrame(index=df.index)
-
     out["관서"] = station or ""
     out["그리드ID"] = grid_id
     out["점포명"] = df[name_col].astype(str) if name_col else ""
@@ -213,7 +207,7 @@ def _cell(text, selected=False, bold=False, align="left"):
 
 
 # -------------------------
-# 핫스팟 격자 TOP 목록 유틸
+# 핫스팟 격자 목록 유틸
 # -------------------------
 def _find_project_root(start: Path) -> Path:
     cur = start.resolve()
@@ -257,7 +251,7 @@ def _gid_str(x) -> str:
     return "" if pd.isna(x) else str(x).strip()
 
 
-def _find_feat_props_by_gid(features: list, gid: str) -> Optional[dict]:
+def _find_feat_props_by_gid(features: List[Dict[str, Any]], gid: str) -> Optional[Dict[str, Any]]:
     gid = str(gid).strip()
     for ft in features or []:
         p = (ft.get("properties", {}) or {})
@@ -283,18 +277,16 @@ def _build_top10pct_grid_df(gdf: pd.DataFrame, station_key: str = "", top_ratio:
         work = work[work["sigungu"].astype(str).str.strip() == target_sigungu].copy()
         if work.empty:
             return pd.DataFrame()
-        k = max(1, math.ceil(len(work) * top_ratio))
+        k = max(1, int(math.ceil(len(work) * top_ratio)))
         return work.sort_values(["need_score", "grid_id"], ascending=[False, True]).head(k).reset_index(drop=True)
 
     selected = []
     for sigungu, group in work.groupby("sigungu", dropna=False):
-        group = group.copy()
         if str(sigungu or "").strip() == "":
             continue
-        k = max(1, math.ceil(len(group) * top_ratio))
-        selected.append(
-            group.sort_values(["need_score", "grid_id"], ascending=[False, True]).head(k)
-        )
+        group = group.copy()
+        k = max(1, int(math.ceil(len(group) * top_ratio)))
+        selected.append(group.sort_values(["need_score", "grid_id"], ascending=[False, True]).head(k))
 
     if not selected:
         return pd.DataFrame()
@@ -303,8 +295,9 @@ def _build_top10pct_grid_df(gdf: pd.DataFrame, station_key: str = "", top_ratio:
     out = out.sort_values(["need_score", "sigungu", "grid_id"], ascending=[False, True, True]).reset_index(drop=True)
     return out
 
+
 # -----------------------------
-# ✅ 다운로드 기준 점포수(DB 카운트) - 세션 캐시
+# 다운로드 기준 점포수(DB 카운트) - 세션 캐시
 # -----------------------------
 def _get_store_count_download_basis(supabase, gid: str, ttl_sec: int = 300) -> int:
     gid = str(gid).strip()
@@ -317,7 +310,6 @@ def _get_store_count_download_basis(supabase, gid: str, ttl_sec: int = 300) -> i
 
     cnt = 0
     try:
-        # supabase-py는 count="exact" 지원하는 경우가 많음
         res = (
             supabase.table("biz_stores")
             .select("grid_id", count="exact")
@@ -343,7 +335,6 @@ def _get_store_count_download_basis(supabase, gid: str, ttl_sec: int = 300) -> i
 def cpo_page(supabase, station: str, role: str):
     st.title("🗂️ CPO 관리 (우선순위 / 설문 수정 / 점수 정보 / 진단)")
 
-    # ✅ (선택) URL 파라미터 이동이 들어오면(모바일) fast mode 켜기
     try:
         qp = dict(st.query_params)
     except Exception:
@@ -356,7 +347,6 @@ def cpo_page(supabase, station: str, role: str):
     if move_shop:
         st.session_state["selected_shop_id"] = str(move_shop)
         st.session_state["selected_grid_id"] = None
-        # ✅ 이동 직후 1회: 초경량 지도
         st.session_state["MV_FAST_MODE"] = True
         try:
             st.query_params.clear()
@@ -364,7 +354,6 @@ def cpo_page(supabase, station: str, role: str):
             st.experimental_set_query_params()
         st.rerun()
 
-    # shops 로드 (0건이어도 지도는 표시해야 함)
     try:
         q = supabase.table("shops").select("*").order("updated_at", desc=True)
         if role == "cpo" and station:
@@ -376,7 +365,6 @@ def cpo_page(supabase, station: str, role: str):
 
     shops_df = pd.DataFrame(shops) if shops else pd.DataFrame()
 
-    # ranked 뷰 로드
     try:
         qv = supabase.table("v_shops_priority_ranked").select("*")
         if station:
@@ -387,7 +375,6 @@ def cpo_page(supabase, station: str, role: str):
 
     ranked_df = pd.DataFrame(ranked) if ranked else pd.DataFrame()
 
-    # ✅ 지도용 DF: shops(좌표) + ranked merge
     map_df = shops_df.copy()
     if (not ranked_df.empty) and (not map_df.empty) and ("id" in ranked_df.columns) and ("id" in map_df.columns):
         keep = [c for c in ["id", "priority_rank", "priority_score", "cnt_patrol", "grid_id"] if c in ranked_df.columns]
@@ -400,7 +387,6 @@ def cpo_page(supabase, station: str, role: str):
             if "priority_rank" not in map_df.columns and "priority_rank_view" in map_df.columns:
                 map_df["priority_rank"] = map_df["priority_rank_view"]
 
-    # ✅ 지도는 항상 표시 (map_view에서 fast mode 지원)
     st.subheader("🗺️ 지도")
     if shops_df.empty:
         st.info("등록된 점포(설문)가 없어도 지도/시군경계/핫스팟 격자는 표시됩니다.")
@@ -408,18 +394,12 @@ def cpo_page(supabase, station: str, role: str):
 
     st.divider()
 
-    # =========================================================
-    # ✅ 🟧 격자 우선순위 TOP (상위 10개만 표시)
-    # - 점포수는 '다운로드 기준(DB count)'으로 표시하여 오차 제거
-    # =========================================================
     st.subheader("🟧 집중관리 우선점포")
 
     station_key = _extract_station_key(station)
     sel_grid = st.session_state.get("selected_grid_id")
 
-    # hotspot 파일 로드
     hot_path = _find_output_file("hotspot_grids.geojson")
-    hot = None
     feats = []
     if hot_path:
         try:
@@ -429,17 +409,32 @@ def cpo_page(supabase, station: str, role: str):
         except Exception:
             feats = []
 
-    # 관서 필터(시군)
-    if feats and station_key:
-        target = _station_key_to_sigungu(station_key)
-        feats = [ft for ft in feats if (ft.get("properties", {}) or {}).get("sigungu") == target]
+    rows = []
+    for ft in feats:
+        p = ft.get("properties", {}) or {}
+        rows.append(
+            {
+                "grid_id": p.get("grid_id"),
+                "sigungu": p.get("sigungu"),
+                "need_score": p.get("need_score"),
+                "cnt_store": p.get("cnt_store"),
+                "cnt_112": p.get("cnt_112"),
+                "cnt_5crime": p.get("cnt_5crime"),
+                "cnt_cctv": p.get("cnt_cctv"),
+                "cnt_patrol": p.get("cnt_patrol"),
+            }
+        )
 
-    # =========================
-    # 1) 지도에서 선택한 격자 패널(정보 + 다운로드)
-    # =========================
+    gdf = pd.DataFrame(rows)
+    gdf_top = _build_top10pct_grid_df(gdf, station_key=station_key, top_ratio=0.10)
+
+    feat_scope = feats
+    if station_key:
+        target_sigungu = _station_key_to_sigungu(station_key)
+        feat_scope = [ft for ft in feats if str((ft.get("properties", {}) or {}).get("sigungu", "")).strip() == target_sigungu]
+
     if sel_grid:
-        st.markdown("### 📌 선택 격자(지도 클릭)")
-        p = _find_feat_props_by_gid(feats, sel_grid) if feats else None
+        p = _find_feat_props_by_gid(feat_scope, sel_grid) if feat_scope else None
 
         raw_df, sel_src = _fetch_grid_store_list(supabase, str(sel_grid))
         dl_cnt = len(raw_df) if raw_df is not None else 0
@@ -453,10 +448,10 @@ def cpo_page(supabase, station: str, role: str):
         if p:
             info = (
                 f"점포 {dl_cnt} | "
-                f"112 {safe_int(p.get('cnt_112'),0)} | "
-                f"5대 {safe_int(p.get('cnt_5crime'),0)} | "
-                f"CCTV {safe_int(p.get('cnt_cctv'),0)} | "
-                f"순찰 {safe_int(p.get('cnt_patrol'),0)}"
+                f"112 {safe_int(p.get('cnt_112'), 0)} | "
+                f"5대 {safe_int(p.get('cnt_5crime'), 0)} | "
+                f"CCTV {safe_int(p.get('cnt_cctv'), 0)} | "
+                f"순찰 {safe_int(p.get('cnt_patrol'), 0)}"
             )
 
         cA, cB, cC = st.columns([3, 5, 2])
@@ -464,9 +459,8 @@ def cpo_page(supabase, station: str, role: str):
             st.markdown(_cell(str(sel_grid), selected=True, bold=True), unsafe_allow_html=True)
         with cB:
             st.markdown(
-                _cell((f"need_score {need:.2f} / {info}" if (need is not None and info) else f"점포 {dl_cnt} (다운로드 기준)"),
-                      selected=True),
-                unsafe_allow_html=True
+                _cell((f"need_score {need:.2f} / {info}" if (need is not None and info) else f"점포 {dl_cnt} (다운로드 기준)"), selected=True),
+                unsafe_allow_html=True,
             )
         with cC:
             if sel_xlsx:
@@ -491,144 +485,116 @@ def cpo_page(supabase, station: str, role: str):
         st.caption(f"다운로드 원천: {sel_src}")
         st.divider()
 
-    # =========================
-    # 2) TOP10 목록 + 체크 합본 다운로드
-    # =========================
-    if not hot_path or not feats:
-        st.caption("hotspot_grids.geojson 파일이 없습니다. (tools/make_hotspot_geojson.py 실행 필요)")
-    else:
-        rows = []
-        for ft in feats:
-            p = ft.get("properties", {}) or {}
-            rows.append({
-                "grid_id": p.get("grid_id"),
-                "sigungu": p.get("sigungu"),
-                "need_score": p.get("need_score"),
-                "cnt_store": p.get("cnt_store"),
-                "cnt_112": p.get("cnt_112"),
-                "cnt_5crime": p.get("cnt_5crime"),
-                "cnt_cctv": p.get("cnt_cctv"),
-                "cnt_patrol": p.get("cnt_patrol"),
-            })
-
-        gdf = pd.DataFrame(rows)
-        if gdf.empty:
-            st.info("표시할 격자 우선순위 데이터가 없습니다.")
+    if not hot_path or gdf_top.empty:
+        if not hot_path:
+            st.caption("hotspot_grids.geojson 파일이 없습니다. (tools/make_hotspot_geojson.py 실행 필요)")
         else:
-            gdf_top = _build_top10pct_grid_df(gdf, station_key=station_key, top_ratio=0.10)
+            st.info("표시할 격자 우선순위 데이터가 없습니다.")
+    else:
+        top_gids = gdf_top["grid_id"].apply(_gid_str).tolist()
+        store_cnt_map = {gid: _get_store_count_download_basis(supabase, gid) for gid in top_gids}
 
-            top_gids = gdf_top["grid_id"].tolist()
+        if sel_grid and str(sel_grid).strip() in top_gids:
+            key = f"chk_{_gid_key(str(sel_grid).strip())}"
+            if key not in st.session_state:
+                st.session_state[key] = True
 
-            store_cnt_map = {gid: _get_store_count_download_basis(supabase, gid) for gid in top_gids}
+        def _toggle_all():
+            v = st.session_state.get("chk_all_top10", False)
+            for gid in top_gids:
+                st.session_state[f"chk_{_gid_key(gid)}"] = v
 
-            if sel_grid and str(sel_grid).strip() in top_gids:
-                k = f"chk_{_gid_key(str(sel_grid).strip())}"
-                if k not in st.session_state:
-                    st.session_state[k] = True
+        if "chk_all_top10" not in st.session_state:
+            st.session_state["chk_all_top10"] = all(
+                st.session_state.get(f"chk_{_gid_key(gid)}", False) for gid in top_gids
+            )
 
-            def _toggle_all():
-                v = st.session_state.get("chk_all_top10", False)
-                for gid in top_gids:
-                    st.session_state[f"chk_{_gid_key(gid)}"] = v
+        checked_gids = [gid for gid in top_gids if st.session_state.get(f"chk_{_gid_key(gid)}", False)]
 
-            if "chk_all_top10" not in st.session_state:
-                st.session_state["chk_all_top10"] = all(
-                    st.session_state.get(f"chk_{_gid_key(gid)}", False) for gid in top_gids
-                )
+        combined_df = None
+        combined_xlsx = None
+        combined_csv = None
+        if checked_gids:
+            frames = []
+            for gid in checked_gids:
+                raw_df, src = _fetch_grid_store_list(supabase, gid)
+                frames.append(_normalize_store_df(raw_df, gid, station, src))
+            combined_df = pd.concat(frames, ignore_index=True)
+            combined_xlsx = df_to_xlsx_bytes_safe(combined_df)
+            combined_csv = combined_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
 
-            checked_gids = [gid for gid in top_gids if st.session_state.get(f"chk_{_gid_key(gid)}", False)]
+        sel_hash = hashlib.md5(("|".join(checked_gids)).encode("utf-8")).hexdigest()[:8]
 
-            combined_df = None
-            combined_xlsx = None
-            combined_csv = None
-            if checked_gids:
-                frames = []
-                for gid in checked_gids:
-                    raw_df, src = _fetch_grid_store_list(supabase, gid)
-                    frames.append(_normalize_store_df(raw_df, gid, station, src))
-                combined_df = pd.concat(frames, ignore_index=True)
-                combined_xlsx = df_to_xlsx_bytes_safe(combined_df)
-                combined_csv = combined_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-
-            sel_hash = hashlib.md5(("|".join(checked_gids)).encode("utf-8")).hexdigest()[:8]
-
-            h = st.columns([1.0, 2.6, 1.3, 3.2, 1.4, 0.6])
-            with h[-2]:
-                if combined_df is not None:
-                    if combined_xlsx:
-                        st.download_button(
-                            "점포리스트 다운",
-                            data=combined_xlsx,
-                            file_name=f"{station_key or '전체'}_선택그리드_점포리스트.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key=f"dl_selected_xlsx_{sel_hash}",
-                            use_container_width=True,
-                        )
-                    else:
-                        st.download_button(
-                            "점포리스트 다운",
-                            data=combined_csv,
-                            file_name=f"{station_key or '전체'}_선택그리드_점포리스트.csv",
-                            mime="text/csv",
-                            key=f"dl_selected_csv_{sel_hash}",
-                            use_container_width=True,
-                        )
+        h = st.columns([1.0, 2.6, 1.3, 3.2, 1.4, 0.6])
+        with h[-2]:
+            if combined_df is not None:
+                if combined_xlsx:
+                    st.download_button(
+                        "점포리스트 다운",
+                        data=combined_xlsx,
+                        file_name=f"{station_key or '전체'}_선택그리드_점포리스트.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key=f"dl_selected_xlsx_{sel_hash}",
+                        use_container_width=True,
+                    )
                 else:
-                    st.caption("체크 후 다운로드")
-            with h[-1]:
-                st.checkbox("", key="chk_all_top10", on_change=_toggle_all, label_visibility="collapsed")
+                    st.download_button(
+                        "점포리스트 다운",
+                        data=combined_csv,
+                        file_name=f"{station_key or '전체'}_선택그리드_점포리스트.csv",
+                        mime="text/csv",
+                        key=f"dl_selected_csv_{sel_hash}",
+                        use_container_width=True,
+                    )
+            else:
+                st.caption("체크 후 다운로드")
+        with h[-1]:
+            st.checkbox("", key="chk_all_top10", on_change=_toggle_all, label_visibility="collapsed")
 
-            st.caption(f"현재 선택 기준 상위 10% 격자 {len(top_gids)}개 — (체크 {len(checked_gids)}개)")
+        st.caption(f"현재 선택 기준 상위 10% 격자 {len(top_gids)}개 — (체크 {len(checked_gids)}개)")
 
-            for i, r in gdf_top.iterrows():
-                grid_id_str = _gid_str(r.get("grid_id"))
-                is_sel = (str(sel_grid or "").strip() == grid_id_str)
+        for i, r in gdf_top.iterrows():
+            grid_id_str = _gid_str(r.get("grid_id"))
+            is_sel = str(sel_grid or "").strip() == grid_id_str
 
-                need = r.get("need_score")
-                need_txt = f"{float(need):.2f}" if need == need else str(need)
+            need = r.get("need_score")
+            need_txt = f"{float(need):.2f}" if pd.notna(need) else ""
 
-                dl_cnt = int(store_cnt_map.get(grid_id_str, 0))
+            dl_cnt = int(store_cnt_map.get(grid_id_str, 0))
+            info = (
+                f"점포 {dl_cnt} | "
+                f"112 {safe_int(r.get('cnt_112'), 0)} | "
+                f"5대 {safe_int(r.get('cnt_5crime'), 0)} | "
+                f"CCTV {safe_int(r.get('cnt_cctv'), 0)} | "
+                f"순찰 {safe_int(r.get('cnt_patrol'), 0)}"
+            )
 
-                info = (
-                    f"점포 {dl_cnt} | "
-                    f"112 {safe_int(r.get('cnt_112'),0)} | "
-                    f"5대 {safe_int(r.get('cnt_5crime'),0)} | "
-                    f"CCTV {safe_int(r.get('cnt_cctv'),0)} | "
-                    f"순찰 {safe_int(r.get('cnt_patrol'),0)}"
-                )
+            c1, c2, c3, c4, c5, c6 = st.columns([1.0, 2.6, 1.3, 3.2, 1.4, 0.6])
 
-                c1, c2, c3, c4, c5, c6 = st.columns([1.0, 2.6, 1.3, 3.2, 1.4, 0.6])
+            with c1:
+                st.markdown(_cell(f"#{i + 1}", selected=is_sel), unsafe_allow_html=True)
+            with c2:
+                st.markdown(_cell(grid_id_str, selected=is_sel, bold=is_sel), unsafe_allow_html=True)
+            with c3:
+                st.markdown(_cell(need_txt, selected=is_sel, align="right"), unsafe_allow_html=True)
+            with c4:
+                st.markdown(_cell(info, selected=is_sel), unsafe_allow_html=True)
 
-                with c1:
-                    st.markdown(_cell(f"#{i+1}", selected=is_sel), unsafe_allow_html=True)
-                with c2:
-                    st.markdown(_cell(grid_id_str, selected=is_sel, bold=is_sel), unsafe_allow_html=True)
-                with c3:
-                    st.markdown(_cell(need_txt, selected=is_sel, align="right"), unsafe_allow_html=True)
-                with c4:
-                    st.markdown(_cell(info, selected=is_sel), unsafe_allow_html=True)
+            with c5:
+                if st.button("📍 이동", key=f"move_{grid_id_str}_{i}"):
+                    st.session_state["selected_grid_id"] = grid_id_str
+                    st.session_state["selected_shop_id"] = None
+                    st.session_state[f"chk_{_gid_key(grid_id_str)}"] = True
+                    st.session_state["MV_FAST_MODE"] = True
+                    st.rerun()
 
-                with c5:
-                    if st.button("📍 이동", key=f"move_{grid_id_str}_{i}"):
-                        st.session_state["selected_grid_id"] = grid_id_str
-                        st.session_state["selected_shop_id"] = None
-                        st.session_state[f"chk_{_gid_key(grid_id_str)}"] = True
-
-                        # ✅ 이동 직후 1회: 초경량 지도(무한로딩 방지)
-                        st.session_state["MV_FAST_MODE"] = True
-
-                        st.rerun()
-
-                with c6:
-                    st.checkbox("", key=f"chk_{_gid_key(grid_id_str)}", label_visibility="collapsed")
+            with c6:
+                st.checkbox("", key=f"chk_{_gid_key(grid_id_str)}", label_visibility="collapsed")
 
     if shops_df.empty:
         st.caption("※ 점포(설문)가 등록되면 TOP5/현황표/설문수정/점수정보/진단 기능이 활성화됩니다.")
         return
 
-    # =========================================================
-    # (기존) TOP5
-    # =========================================================
     st.subheader("🏆 우선순위 TOP5")
 
     if not ranked_df.empty:
@@ -660,7 +626,6 @@ def cpo_page(supabase, station: str, role: str):
                 if st.button("📍 이동", key=f"top_move_{shop_id}_{i}", use_container_width=True):
                     st.session_state["selected_shop_id"] = str(shop_id)
                     st.session_state["selected_grid_id"] = None
-                    # ✅ 이동 직후 1회: 초경량 지도(무한로딩 방지)
                     st.session_state["MV_FAST_MODE"] = True
                     st.rerun()
     else:
@@ -668,9 +633,6 @@ def cpo_page(supabase, station: str, role: str):
 
     st.divider()
 
-    # =========================================================
-    # (기존) 전체 현황표
-    # =========================================================
     st.subheader("📋 전체 현황표")
 
     if ranked_df.empty:
@@ -693,7 +655,7 @@ def cpo_page(supabase, station: str, role: str):
             "uses_security_company", "has_emergency_bell", "has_cctv",
             "other_security", "cpo_comment",
             "officer_rank", "officer_name",
-            "updated_at"
+            "updated_at",
         ]
         cols2 = [c for c in want_cols if c in view_df.columns]
 
@@ -739,11 +701,9 @@ def cpo_page(supabase, station: str, role: str):
                     if "id" in view_df.columns:
                         st.session_state["selected_shop_id"] = str(view_df.iloc[idx]["id"])
                         st.session_state["selected_grid_id"] = None
-                        # ✅ 표 클릭 이동도 마찬가지로 fast mode
                         st.session_state["MV_FAST_MODE"] = True
             except Exception:
                 pass
-
         except TypeError:
             st.dataframe(display_df, use_container_width=True, height=420, hide_index=True)
-            st.caption("※ 표 클릭으로 지도 이동 기능은 Streamlit 최신 버전에서만 동작합니다.")s
+            st.caption("※ 표 클릭으로 지도 이동 기능은 Streamlit 최신 버전에서만 동작합니다.")
