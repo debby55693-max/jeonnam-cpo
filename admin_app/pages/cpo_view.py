@@ -356,7 +356,7 @@ def cpo_page(supabase, station: str, role: str):
 
     try:
         q = supabase.table("shops").select("*").order("updated_at", desc=True)
-        if station:
+        if role == "cpo" and station:
             q = q.eq("station", station)
         shops = q.execute().data or []
     except Exception as e:
