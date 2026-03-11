@@ -9,6 +9,7 @@ from typing import Optional
 from io import BytesIO
 import hashlib
 import time
+import math
 
 from pages.map_view import map_page
 
@@ -216,8 +217,8 @@ def _cell(text, selected=False, bold=False, align="left"):
 # -------------------------
 def _find_project_root(start: Path) -> Path:
     cur = start.resolve()
-    for _ in range(10):
-        if (cur / "data").exists():
+    for _ in range(20):
+        if (cur / "streamlit_app.py").exists() or (cur / "requirements.txt").exists() or (cur / "admin_app").exists():
             return cur
         cur = cur.parent
     return start.resolve().parents[1]
@@ -231,6 +232,7 @@ def _find_output_file(rel_name: str) -> Optional[Path]:
         root / "admin_app" / "output" / rel_name,
         root / "survey_app" / "output" / rel_name,
         here.parents[1] / "output" / rel_name,
+        here.parents[2] / "output" / rel_name,
     ]:
         if p.exists():
             return p
@@ -263,6 +265,43 @@ def _find_feat_props_by_gid(features: list, gid: str) -> Optional[dict]:
             return p
     return None
 
+
+def _build_top10pct_grid_df(gdf: pd.DataFrame, station_key: str = "", top_ratio: float = 0.10) -> pd.DataFrame:
+    if gdf is None or gdf.empty:
+        return pd.DataFrame()
+
+    work = gdf.copy()
+    work["grid_id"] = work["grid_id"].apply(_gid_str)
+    work = work[work["grid_id"] != ""].copy()
+    work["need_score"] = pd.to_numeric(work["need_score"], errors="coerce")
+    work = work.dropna(subset=["need_score"]).copy()
+    if work.empty:
+        return pd.DataFrame()
+
+    if station_key:
+        target_sigungu = _station_key_to_sigungu(station_key)
+        work = work[work["sigungu"].astype(str).str.strip() == target_sigungu].copy()
+        if work.empty:
+            return pd.DataFrame()
+        k = max(1, math.ceil(len(work) * top_ratio))
+        return work.sort_values(["need_score", "grid_id"], ascending=[False, True]).head(k).reset_index(drop=True)
+
+    selected = []
+    for sigungu, group in work.groupby("sigungu", dropna=False):
+        group = group.copy()
+        if str(sigungu or "").strip() == "":
+            continue
+        k = max(1, math.ceil(len(group) * top_ratio))
+        selected.append(
+            group.sort_values(["need_score", "grid_id"], ascending=[False, True]).head(k)
+        )
+
+    if not selected:
+        return pd.DataFrame()
+
+    out = pd.concat(selected, ignore_index=True)
+    out = out.sort_values(["need_score", "sigungu", "grid_id"], ascending=[False, True, True]).reset_index(drop=True)
+    return out
 
 # -----------------------------
 # ✅ 다운로드 기준 점포수(DB 카운트) - 세션 캐시
@@ -373,9 +412,8 @@ def cpo_page(supabase, station: str, role: str):
     # ✅ 🟧 격자 우선순위 TOP (상위 10개만 표시)
     # - 점포수는 '다운로드 기준(DB count)'으로 표시하여 오차 제거
     # =========================================================
-    st.subheader("🟧 격자 우선순위 TOP (need_score)")
+    st.subheader("🟧 집중관리 우선점포")
 
-    TOPN = 10
     station_key = _extract_station_key(station)
     sel_grid = st.session_state.get("selected_grid_id")
 
@@ -464,6 +502,7 @@ def cpo_page(supabase, station: str, role: str):
             p = ft.get("properties", {}) or {}
             rows.append({
                 "grid_id": p.get("grid_id"),
+                "sigungu": p.get("sigungu"),
                 "need_score": p.get("need_score"),
                 "cnt_store": p.get("cnt_store"),
                 "cnt_112": p.get("cnt_112"),
@@ -476,12 +515,7 @@ def cpo_page(supabase, station: str, role: str):
         if gdf.empty:
             st.info("표시할 격자 우선순위 데이터가 없습니다.")
         else:
-            gdf["need_score"] = pd.to_numeric(gdf["need_score"], errors="coerce")
-            gdf = gdf.sort_values(["need_score"], ascending=False).reset_index(drop=True)
-
-            gdf_top = gdf.head(TOPN).copy()
-            gdf_top["grid_id"] = gdf_top["grid_id"].apply(_gid_str)
-            gdf_top = gdf_top[gdf_top["grid_id"] != ""].reset_index(drop=True)
+            gdf_top = _build_top10pct_grid_df(gdf, station_key=station_key, top_ratio=0.10)
 
             top_gids = gdf_top["grid_id"].tolist()
 
@@ -544,7 +578,7 @@ def cpo_page(supabase, station: str, role: str):
             with h[-1]:
                 st.checkbox("", key="chk_all_top10", on_change=_toggle_all, label_visibility="collapsed")
 
-            st.caption(f"현재 관서 기준 상위 {len(top_gids)}개 격자 — (체크 {len(checked_gids)}개)")
+            st.caption(f"현재 선택 기준 상위 10% 격자 {len(top_gids)}개 — (체크 {len(checked_gids)}개)")
 
             for i, r in gdf_top.iterrows():
                 grid_id_str = _gid_str(r.get("grid_id"))
@@ -712,4 +746,4 @@ def cpo_page(supabase, station: str, role: str):
 
         except TypeError:
             st.dataframe(display_df, use_container_width=True, height=420, hide_index=True)
-            st.caption("※ 표 클릭으로 지도 이동 기능은 Streamlit 최신 버전에서만 동작합니다.")
+            st.caption("※ 표 클릭으로 지도 이동 기능은 Streamlit 최신 버전에서만 동작합니다.")s

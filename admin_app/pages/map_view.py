@@ -300,6 +300,7 @@ def _add_hotspot_grid_layer(m: folium.Map, station: Optional[str]):
     🟧 위험도/핫스팟 격자 레이어
     - 관서(시군)로 필터
     - 시군별 상위 10%만 표시
+    - need_score에 따라 빨강 농도 차등 표시
     """
     gj = _load_hotspot_geojson()
     if not gj:
@@ -316,37 +317,50 @@ def _add_hotspot_grid_layer(m: folium.Map, station: Optional[str]):
     if not feats:
         return
 
-    # tooltip 필드 누락 방지(죽지 않게)
+    scores = []
     for ft in feats:
         p = ft.setdefault("properties", {})
         if "grid_id" not in p:
             p["grid_id"] = ""
-        if "need_score" not in p:
-            p["need_score"] = 0
+        try:
+            s = float(p.get("need_score", 0) or 0)
+        except Exception:
+            s = 0.0
+        p["need_score"] = s
+        scores.append(s)
+
+    min_score = min(scores) if scores else 0.0
+    max_score = max(scores) if scores else 1.0
+    span = (max_score - min_score) if (max_score - min_score) > 0 else 1.0
+
+    def _score_to_color(v: float) -> str:
+        try:
+            ratio = (float(v) - min_score) / span
+        except Exception:
+            ratio = 0.0
+        ratio = max(0.0, min(1.0, ratio))
+
+        light = (255, 235, 238)
+        dark = (183, 28, 28)
+        r = int(light[0] + (dark[0] - light[0]) * ratio)
+        g = int(light[1] + (dark[1] - light[1]) * ratio)
+        b = int(light[2] + (dark[2] - light[2]) * ratio)
+        return f"#{r:02X}{g:02X}{b:02X}"
 
     def style_function(feature):
         v = (feature.get("properties", {}) or {}).get("need_score", 0)
-        try:
-            v = float(v)
-        except Exception:
-            v = 0.0
-        if v >= 80:
-            fc = "#D94C00"
-        elif v >= 60:
-            fc = "#FF7A1A"
-        elif v >= 40:
-            fc = "#FFA65C"
-        elif v >= 20:
-            fc = "#FFC999"
-        else:
-            fc = "#FFE6CC"
-        return {"fillColor": fc, "color": "#444444", "weight": 1, "fillOpacity": 0.35}
+        return {
+            "fillColor": _score_to_color(v),
+            "color": "#8B1E1E",
+            "weight": 1,
+            "fillOpacity": 0.55,
+        }
 
     folium.GeoJson(
         {"type": "FeatureCollection", "features": feats},
-        name="🟧 핫스팟 격자(시군 상위10%)",
+        name="🟧 집중관리 우선점포 격자",
         style_function=style_function,
-        tooltip=GeoJsonTooltip(fields=["grid_id", "need_score"], aliases=["grid", "필요도"], sticky=True),
+        highlight_function=lambda _: {"weight": 2, "color": "#5A0F0F", "fillOpacity": 0.65},
     ).add_to(m)
 
 
@@ -501,17 +515,26 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
     # ✅ 격자 클릭 → grid_id 추출
     try:
         if isinstance(map_state, dict):
-            popup_txt = str(map_state.get("last_object_clicked_popup") or "")
-            tip_txt = str(map_state.get("last_object_clicked_tooltip") or "")
-            combined = f"{popup_txt} {tip_txt}"
+            clicked_gid = None
 
-            m_gid = re.search(r"([가-힣]{2}\d{6})", combined)
-            if m_gid:
-                clicked_gid = m_gid.group(1)
-                if str(st.session_state.get("selected_grid_id") or "") != str(clicked_gid):
-                    st.session_state["selected_grid_id"] = str(clicked_gid)
-                    st.session_state["selected_shop_id"] = None
-                    st.rerun()
+            active = map_state.get("last_active_drawing") or {}
+            if isinstance(active, dict):
+                props = active.get("properties") or {}
+                if isinstance(props, dict):
+                    clicked_gid = str(props.get("grid_id") or "").strip() or None
+
+            if not clicked_gid:
+                popup_txt = str(map_state.get("last_object_clicked_popup") or "")
+                tip_txt = str(map_state.get("last_object_clicked_tooltip") or "")
+                combined = f"{popup_txt} {tip_txt}"
+                m_gid = re.search(r"([가-힣]{2}\d{6})", combined)
+                if m_gid:
+                    clicked_gid = m_gid.group(1)
+
+            if clicked_gid and str(st.session_state.get("selected_grid_id") or "") != str(clicked_gid):
+                st.session_state["selected_grid_id"] = str(clicked_gid)
+                st.session_state["selected_shop_id"] = None
+                st.rerun()
     except Exception:
         pass
 
