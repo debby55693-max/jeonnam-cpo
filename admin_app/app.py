@@ -1,4 +1,3 @@
-# admin_app/app.py
 import streamlit as st
 
 from core.auth import login_ui
@@ -15,7 +14,6 @@ JEONNAM_POLICE_STATIONS = [
     "구례경찰서", "신안경찰서",
 ]
 
-# streamlit_app.py에서 set_page_config를 이미 호출했으면 여기서 에러가 날 수 있어 방지
 try:
     st.set_page_config(
         page_title="소상공인 방범물품 지원",
@@ -36,7 +34,6 @@ def main():
     access_token = session["access_token"]
     user = session["user"]
 
-    # refresh_token까지 전달 (배포/세션 안정화)
     refresh_token = st.session_state.get("refresh_token")
     supabase = get_authed_client(access_token, refresh_token)
 
@@ -53,14 +50,12 @@ def main():
         selected_station = st.sidebar.selectbox(
             "조회할 경찰서",
             JEONNAM_POLICE_STATIONS,
-            index=0,  # 기본: 전체
+            index=0,
             key="admin_station_filter",
         )
 
-        # 전체 선택 시 → None 처리
         station = None if selected_station == "전체" else selected_station
     else:
-        # CPO는 무조건 본인 관서
         station = my_station
 
     # =============================
