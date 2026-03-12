@@ -1,6 +1,6 @@
 # admin_app/core/auth.py
 import streamlit as st
-from core.supabase_client import get_supabase  # ✅ 이것만 import
+from core.supabase_client import get_supabase
 
 
 def _apply_auth_to_postgrest(supabase, access_token: str):
@@ -17,12 +17,79 @@ def _apply_auth_to_postgrest(supabase, access_token: str):
         supabase.postgrest.auth(access_token)        # 일부 버전
 
 
+def _load_profile_by_uid(supabase, uid: str):
+    """
+    app_user_profiles에서 role / station / is_enabled 조회
+    """
+    if not uid:
+        return None
+
+    try:
+        resp = (
+            supabase
+            .table("app_user_profiles")
+            .select("role, station, is_enabled")
+            .eq("user_id", uid)
+            .limit(1)
+            .execute()
+        )
+        return resp.data[0] if resp.data else None
+    except Exception:
+        return None
+
+
+def _ensure_profile_in_session(supabase):
+    """
+    이미 로그인된 세션인데 role/station이 비어 있는 경우,
+    app_user_profiles를 다시 읽어서 session_state를 보정한다.
+    """
+    token = st.session_state.get("token")
+    uid = st.session_state.get("uid")
+
+    if not token:
+        return
+
+    _apply_auth_to_postgrest(supabase, token)
+
+    need_role = st.session_state.get("role") in [None, "", "None"]
+    need_station = st.session_state.get("station") in [None, "", "None"]
+
+    if not (need_role or need_station):
+        return
+
+    # uid가 없으면 auth 현재 사용자에서 다시 시도
+    if not uid:
+        try:
+            user_resp = supabase.auth.get_user(token)
+            user_obj = getattr(user_resp, "user", None)
+            if user_obj:
+                uid = getattr(user_obj, "id", None)
+                if uid:
+                    st.session_state["uid"] = uid
+                email = getattr(user_obj, "email", None)
+                if email and not st.session_state.get("email"):
+                    st.session_state["email"] = email
+        except Exception:
+            uid = None
+
+    profile = _load_profile_by_uid(supabase, uid)
+    if not profile:
+        return
+
+    if profile.get("is_enabled") is False:
+        return
+
+    st.session_state["role"] = profile.get("role", "cpo")
+    st.session_state["station"] = profile.get("station")
+
+
 def login_ui():
     supabase = get_supabase()
 
-    # ✅ 이미 로그인된 토큰이 있으면, supabase postgrest에 JWT 다시 주입
+    # 이미 로그인된 세션이면 토큰 재주입 + role/station 보정
     if "token" in st.session_state and st.session_state.get("token"):
         _apply_auth_to_postgrest(supabase, st.session_state["token"])
+        _ensure_profile_in_session(supabase)
 
     with st.sidebar:
         st.subheader("🔐 로그인")
@@ -30,7 +97,7 @@ def login_ui():
         # =============================
         # 이미 로그인된 경우
         # =============================
-        if "token" in st.session_state:
+        if "token" in st.session_state and st.session_state.get("token"):
             st.success(f"로그인됨: {st.session_state.get('email')}")
             st.write(f"관서: {st.session_state.get('station')}")
             st.write(f"권한: {st.session_state.get('role')}")
@@ -68,7 +135,7 @@ def login_ui():
                 user = auth.user
                 session = auth.session
 
-                # ✅ 토큰 먼저 저장 + postgrest에 주입 (RLS/조회 안정화)
+                # 토큰 먼저 저장 + postgrest에 주입
                 st.session_state["token"] = session.access_token
                 st.session_state["uid"] = user.id
                 st.session_state["email"] = user.email
@@ -76,12 +143,11 @@ def login_ui():
 
                 _apply_auth_to_postgrest(supabase, session.access_token)
 
-                # ✅ 우리가 만든 매핑 테이블로 조회 (0건이어도 에러 안 나게)
                 resp = (
                     supabase
-                    .table("app_user_profiles")  # ✅ 여기!
+                    .table("app_user_profiles")
                     .select("role, station, is_enabled")
-                    .eq("user_id", user.id)      # ✅ 여기!
+                    .eq("user_id", user.id)
                     .limit(1)
                     .execute()
                 )
