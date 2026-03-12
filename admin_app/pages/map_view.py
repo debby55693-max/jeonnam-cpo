@@ -154,12 +154,14 @@ def _load_geojson_url(url: str) -> Optional[Dict[str, Any]]:
 
 @st.cache_data(show_spinner=False)
 def load_sigungu_geojson() -> Optional[Dict[str, Any]]:
+    # 1) 로컬(assets/data) 우선
     p = _find_asset_or_data_path("jeonnam_sig.geojson")
     if p:
         gj = _load_geojson_path(str(p))
         if gj:
             return gj
 
+    # 2) Streamlit Secrets URL
     for key in ("JEONNAM_SIG_GEOJSON_URL", "JEONNAM_SGG_GEOJSON_URL"):
         url = st.secrets.get(key)
         if url:
@@ -260,6 +262,7 @@ def _filter_hotspot_by_station(features: List[Dict[str, Any]], station: Optional
     return filtered if filtered else features
 
 
+# ✅ 시군별 상위 10%만 남기기(모바일 성능 핵심)
 def _filter_top_percent_by_sigungu(features: List[Dict[str, Any]], top_ratio: float = 0.10) -> List[Dict[str, Any]]:
     if not features:
         return []
@@ -297,6 +300,7 @@ def _add_hotspot_grid_layer(m: folium.Map, station: Optional[str]):
     🟧 위험도/핫스팟 격자 레이어
     - 관서(시군)로 필터
     - 시군별 상위 10%만 표시
+    - need_score에 따라 빨강 농도 차등 표시
     """
     gj = _load_hotspot_geojson()
     if not gj:
@@ -357,7 +361,6 @@ def _add_hotspot_grid_layer(m: folium.Map, station: Optional[str]):
         name="🟧 집중관리 우선점포 격자",
         style_function=style_function,
         highlight_function=lambda _: {"weight": 2, "color": "#5A0F0F", "fillOpacity": 0.65},
-        tooltip=GeoJsonTooltip(fields=["grid_id", "need_score"], aliases=["grid", "필요도"], sticky=True),
     ).add_to(m)
 
 
@@ -472,11 +475,12 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
                 center_lat, center_lon = cen
                 zoom = 16
 
+    # ✅ prefer_canvas=True: 모바일 렌더 성능 개선
     m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, control_scale=True, prefer_canvas=True)
 
+    # ✅ 시군 경계
     gj = load_sigungu_geojson()
     gj_filtered = None
-
     if gj is not None:
         gj_filtered = gj
         station_key = _extract_sigungu_key(station)
@@ -497,11 +501,14 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
             style_function=lambda _: {"fillOpacity": 0.03, "weight": 6, "color": "#000000"},
         ).add_to(m)
 
+    # ✅ 🟧 핫스팟/위험도 격자(시군 상위 10%)
     _add_hotspot_grid_layer(m, station)
 
+    # ✅ 선택 격자 강조
     if sel_grid:
         _add_selected_grid_highlight(m, str(sel_grid))
 
+    # ✅ 점포 마커(원래 방식 유지)
     if not valid.empty:
         default_icon = _find_asset_or_data_path("icons/shop_default.png")
         gold_icon = _find_asset_or_data_path("icons/shop_gold.png")
@@ -564,6 +571,7 @@ def map_page(station=None, shops_df: Optional[pd.DataFrame] = None):
         key=f"shops_map_{sel_id or sel_grid or station or 'init'}",
     )
 
+    # ✅ 격자 클릭 → grid_id 추출
     try:
         if isinstance(map_state, dict):
             clicked_gid = None
