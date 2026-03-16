@@ -625,7 +625,6 @@ def cpo_page(supabase, station: str, role: str):
                 with c6:
                     st.checkbox("", key=f"chk_{_gid_key(grid_id_str)}", label_visibility="collapsed")
 
-    # 기존 return 제거
     if shops_df.empty:
         st.caption("※ 현재 관서에 등록된 설문 점포가 없어 일부 연계 기능은 제한될 수 있습니다.")
 
@@ -752,7 +751,7 @@ def cpo_page(supabase, station: str, role: str):
     st.divider()
 
     # =========================================================
-    # 설문 수정 / 삭제 (복원)
+    # 설문 수정 / 삭제
     # =========================================================
     st.subheader("✏️ 설문 수정 / 삭제")
 
@@ -861,7 +860,7 @@ def cpo_page(supabase, station: str, role: str):
 
         save_col, delete_col = st.columns(2)
         save_clicked = save_col.form_submit_button("💾 수정 저장", use_container_width=True)
-        delete_clicked = delete_col.form_submit_button("🗑️ 삭제 요청", use_container_width=True)
+        delete_clicked = delete_col.form_submit_button("🗑️ 삭제", use_container_width=True)
 
     if save_clicked:
         payload = {}
@@ -914,24 +913,12 @@ def cpo_page(supabase, station: str, role: str):
             st.error(f"수정 실패: {e}")
 
     if delete_clicked:
-        st.session_state["delete_target_shop_id"] = str(selected_shop_id)
-
-    if st.session_state.get("delete_target_shop_id") == str(selected_shop_id):
-        st.warning("정말 삭제하시려면 아래 '최종 삭제'를 누르세요. 삭제 후 복구가 어렵습니다.")
-        d1, d2 = st.columns(2)
-
-        if d1.button("🚨 최종 삭제", key=f"delete_final_{selected_shop_id}", use_container_width=True):
-            try:
-                supabase.table("shops").delete().eq("id", shop_row["id"]).execute()
-                st.success("점포 설문이 삭제되었습니다.")
-                st.session_state.pop("delete_target_shop_id", None)
-                st.session_state.pop("selected_shop_id", None)
-                st.session_state["MV_FAST_MODE"] = True
-                time.sleep(0.3)
-                st.rerun()
-            except Exception as e:
-                st.error(f"삭제 실패: {e}")
-
-        if d2.button("취소", key=f"delete_cancel_{selected_shop_id}", use_container_width=True):
-            st.session_state.pop("delete_target_shop_id", None)
+        try:
+            supabase.table("shops").delete().eq("id", shop_row["id"]).execute()
+            st.success("점포 설문이 삭제되었습니다.")
+            st.session_state.pop("selected_shop_id", None)
+            st.session_state["MV_FAST_MODE"] = True
+            time.sleep(0.3)
             st.rerun()
+        except Exception as e:
+            st.error(f"삭제 실패: {e}")
