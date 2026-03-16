@@ -303,6 +303,7 @@ def _build_top10pct_grid_df(gdf: pd.DataFrame, station_key: str = "", top_ratio:
     out = out.sort_values(["need_score", "sigungu", "grid_id"], ascending=[False, True, True]).reset_index(drop=True)
     return out
 
+
 # -----------------------------
 # ✅ 다운로드 기준 점포수(DB 카운트) - 세션 캐시
 # -----------------------------
@@ -622,9 +623,10 @@ def cpo_page(supabase, station: str, role: str):
                 with c6:
                     st.checkbox("", key=f"chk_{_gid_key(grid_id_str)}", label_visibility="collapsed")
 
+    # ✅ 기존에는 여기서 return 해버려서 CPO 로그인 시 TOP5/현황표가 통째로 사라졌음
+    # ✅ 이제는 안내만 띄우고 아래 TOP5/전체 현황표는 계속 렌더링
     if shops_df.empty:
-        st.caption("※ 점포(설문)가 등록되면 TOP5/현황표/설문수정/점수정보/진단 기능이 활성화됩니다.")
-        return
+        st.caption("※ 현재 관서에 등록된 설문 점포가 없어 일부 연계 기능은 제한될 수 있습니다.")
 
     # =========================================================
     # (기존) TOP5
