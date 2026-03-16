@@ -71,6 +71,24 @@ def safe_str(v, default=""):
         return default
 
 
+def safe_bool(v, default=False):
+    try:
+        if v is None:
+            return default
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return bool(v)
+        s = str(v).strip().lower()
+        if s in ["true", "1", "y", "yes", "예", "있음"]:
+            return True
+        if s in ["false", "0", "n", "no", "아니오", "없음", ""]:
+            return False
+        return default
+    except:
+        return default
+
+
 def clean_phone(phone: str) -> str:
     if not phone:
         return ""
@@ -133,7 +151,6 @@ def _fetch_grid_store_list(supabase, grid_id: str) -> tuple[pd.DataFrame, str]:
         if data:
             df = pd.DataFrame(data)
             return df, "biz_stores"
-        # data가 0이면 그대로 fallback 하지 않고, 빈 df 반환(다운로드 기준을 biz_stores로 보는 게 자연스러움)
         return pd.DataFrame(), "biz_stores"
     except Exception:
         pass
@@ -184,7 +201,6 @@ def _normalize_store_df(df: pd.DataFrame, grid_id: str, station: str, source: st
     phone_col = pick(["phone", "tel", "owner_phone", "전화번호"])
     cat_col = pick(["category", "업종", "indsLclsNm", "indsMclsNm", "indsSclsNm"])
 
-    # ✅ 핵심: df.index를 가진 out으로 시작해야 스칼라 컬럼이 NaN 안 됨
     out = pd.DataFrame(index=df.index)
 
     out["관서"] = station or ""
@@ -318,7 +334,6 @@ def _get_store_count_download_basis(supabase, gid: str, ttl_sec: int = 300) -> i
 
     cnt = 0
     try:
-        # supabase-py는 count="exact" 지원하는 경우가 많음
         res = (
             supabase.table("biz_stores")
             .select("grid_id", count="exact")
@@ -344,7 +359,6 @@ def _get_store_count_download_basis(supabase, gid: str, ttl_sec: int = 300) -> i
 def cpo_page(supabase, station: str, role: str):
     st.title("🗂️ CPO 관리 (우선순위 / 설문 수정 / 점수 정보 / 진단)")
 
-    # ✅ (선택) URL 파라미터 이동이 들어오면(모바일) fast mode 켜기
     try:
         qp = dict(st.query_params)
     except Exception:
@@ -357,7 +371,6 @@ def cpo_page(supabase, station: str, role: str):
     if move_shop:
         st.session_state["selected_shop_id"] = str(move_shop)
         st.session_state["selected_grid_id"] = None
-        # ✅ 이동 직후 1회: 초경량 지도
         st.session_state["MV_FAST_MODE"] = True
         try:
             st.query_params.clear()
@@ -365,7 +378,7 @@ def cpo_page(supabase, station: str, role: str):
             st.experimental_set_query_params()
         st.rerun()
 
-    # shops 로드 (0건이어도 지도는 표시해야 함)
+    # shops 로드
     try:
         q = supabase.table("shops").select("*").order("updated_at", desc=True)
         if role == "cpo" and station:
@@ -388,7 +401,7 @@ def cpo_page(supabase, station: str, role: str):
 
     ranked_df = pd.DataFrame(ranked) if ranked else pd.DataFrame()
 
-    # ✅ 지도용 DF: shops(좌표) + ranked merge
+    # 지도용 DF
     map_df = shops_df.copy()
     if (not ranked_df.empty) and (not map_df.empty) and ("id" in ranked_df.columns) and ("id" in map_df.columns):
         keep = [c for c in ["id", "priority_rank", "priority_score", "cnt_patrol", "grid_id"] if c in ranked_df.columns]
@@ -401,7 +414,7 @@ def cpo_page(supabase, station: str, role: str):
             if "priority_rank" not in map_df.columns and "priority_rank_view" in map_df.columns:
                 map_df["priority_rank"] = map_df["priority_rank_view"]
 
-    # ✅ 지도는 항상 표시 (map_view에서 fast mode 지원)
+    # 지도
     st.subheader("🗺️ 지도")
     if shops_df.empty:
         st.info("등록된 점포(설문)가 없어도 지도/시군경계/핫스팟 격자는 표시됩니다.")
@@ -410,17 +423,14 @@ def cpo_page(supabase, station: str, role: str):
     st.divider()
 
     # =========================================================
-    # ✅ 🟧 격자 우선순위 TOP (상위 10개만 표시)
-    # - 점포수는 '다운로드 기준(DB count)'으로 표시하여 오차 제거
+    # 집중관리 우선점포
     # =========================================================
     st.subheader("🟧 집중관리 우선점포")
 
     station_key = _extract_station_key(station)
     sel_grid = st.session_state.get("selected_grid_id")
 
-    # hotspot 파일 로드
     hot_path = _find_output_file("hotspot_grids.geojson")
-    hot = None
     feats = []
     if hot_path:
         try:
@@ -430,14 +440,11 @@ def cpo_page(supabase, station: str, role: str):
         except Exception:
             feats = []
 
-    # 관서 필터(시군)
     if feats and station_key:
         target = _station_key_to_sigungu(station_key)
         feats = [ft for ft in feats if (ft.get("properties", {}) or {}).get("sigungu") == target]
 
-    # =========================
-    # 1) 지도에서 선택한 격자 패널(정보 + 다운로드)
-    # =========================
+    # 1) 선택 격자 패널
     if sel_grid:
         st.markdown("### 📌 선택 격자(지도 클릭)")
         p = _find_feat_props_by_gid(feats, sel_grid) if feats else None
@@ -454,10 +461,10 @@ def cpo_page(supabase, station: str, role: str):
         if p:
             info = (
                 f"점포 {dl_cnt} | "
-                f"112 {safe_int(p.get('cnt_112'),0)} | "
-                f"5대 {safe_int(p.get('cnt_5crime'),0)} | "
-                f"CCTV {safe_int(p.get('cnt_cctv'),0)} | "
-                f"순찰 {safe_int(p.get('cnt_patrol'),0)}"
+                f"112 {safe_int(p.get('cnt_112'), 0)} | "
+                f"5대 {safe_int(p.get('cnt_5crime'), 0)} | "
+                f"CCTV {safe_int(p.get('cnt_cctv'), 0)} | "
+                f"순찰 {safe_int(p.get('cnt_patrol'), 0)}"
             )
 
         cA, cB, cC = st.columns([3, 5, 2])
@@ -465,8 +472,10 @@ def cpo_page(supabase, station: str, role: str):
             st.markdown(_cell(str(sel_grid), selected=True, bold=True), unsafe_allow_html=True)
         with cB:
             st.markdown(
-                _cell((f"need_score {need:.2f} / {info}" if (need is not None and info) else f"점포 {dl_cnt} (다운로드 기준)"),
-                      selected=True),
+                _cell(
+                    (f"need_score {need:.2f} / {info}" if (need is not None and info) else f"점포 {dl_cnt} (다운로드 기준)"),
+                    selected=True
+                ),
                 unsafe_allow_html=True
             )
         with cC:
@@ -492,9 +501,7 @@ def cpo_page(supabase, station: str, role: str):
         st.caption(f"다운로드 원천: {sel_src}")
         st.divider()
 
-    # =========================
     # 2) TOP10 목록 + 체크 합본 다운로드
-    # =========================
     if not hot_path or not feats:
         st.caption("hotspot_grids.geojson 파일이 없습니다. (tools/make_hotspot_geojson.py 실행 필요)")
     else:
@@ -517,9 +524,7 @@ def cpo_page(supabase, station: str, role: str):
             st.info("표시할 격자 우선순위 데이터가 없습니다.")
         else:
             gdf_top = _build_top10pct_grid_df(gdf, station_key=station_key, top_ratio=0.10)
-
             top_gids = gdf_top["grid_id"].tolist()
-
             store_cnt_map = {gid: _get_store_count_download_basis(supabase, gid) for gid in top_gids}
 
             if sel_grid and str(sel_grid).strip() in top_gids:
@@ -592,10 +597,10 @@ def cpo_page(supabase, station: str, role: str):
 
                 info = (
                     f"점포 {dl_cnt} | "
-                    f"112 {safe_int(r.get('cnt_112'),0)} | "
-                    f"5대 {safe_int(r.get('cnt_5crime'),0)} | "
-                    f"CCTV {safe_int(r.get('cnt_cctv'),0)} | "
-                    f"순찰 {safe_int(r.get('cnt_patrol'),0)}"
+                    f"112 {safe_int(r.get('cnt_112'), 0)} | "
+                    f"5대 {safe_int(r.get('cnt_5crime'), 0)} | "
+                    f"CCTV {safe_int(r.get('cnt_cctv'), 0)} | "
+                    f"순찰 {safe_int(r.get('cnt_patrol'), 0)}"
                 )
 
                 c1, c2, c3, c4, c5, c6 = st.columns([1.0, 2.6, 1.3, 3.2, 1.4, 0.6])
@@ -614,22 +619,18 @@ def cpo_page(supabase, station: str, role: str):
                         st.session_state["selected_grid_id"] = grid_id_str
                         st.session_state["selected_shop_id"] = None
                         st.session_state[f"chk_{_gid_key(grid_id_str)}"] = True
-
-                        # ✅ 이동 직후 1회: 초경량 지도(무한로딩 방지)
                         st.session_state["MV_FAST_MODE"] = True
-
                         st.rerun()
 
                 with c6:
                     st.checkbox("", key=f"chk_{_gid_key(grid_id_str)}", label_visibility="collapsed")
 
-    # ✅ 기존에는 여기서 return 해버려서 CPO 로그인 시 TOP5/현황표가 통째로 사라졌음
-    # ✅ 이제는 안내만 띄우고 아래 TOP5/전체 현황표는 계속 렌더링
+    # 기존 return 제거
     if shops_df.empty:
         st.caption("※ 현재 관서에 등록된 설문 점포가 없어 일부 연계 기능은 제한될 수 있습니다.")
 
     # =========================================================
-    # (기존) TOP5
+    # TOP5
     # =========================================================
     st.subheader("🏆 우선순위 TOP5")
 
@@ -662,7 +663,6 @@ def cpo_page(supabase, station: str, role: str):
                 if st.button("📍 이동", key=f"top_move_{shop_id}_{i}", use_container_width=True):
                     st.session_state["selected_shop_id"] = str(shop_id)
                     st.session_state["selected_grid_id"] = None
-                    # ✅ 이동 직후 1회: 초경량 지도(무한로딩 방지)
                     st.session_state["MV_FAST_MODE"] = True
                     st.rerun()
     else:
@@ -671,7 +671,7 @@ def cpo_page(supabase, station: str, role: str):
     st.divider()
 
     # =========================================================
-    # (기존) 전체 현황표
+    # 전체 현황표
     # =========================================================
     st.subheader("📋 전체 현황표")
 
@@ -741,7 +741,6 @@ def cpo_page(supabase, station: str, role: str):
                     if "id" in view_df.columns:
                         st.session_state["selected_shop_id"] = str(view_df.iloc[idx]["id"])
                         st.session_state["selected_grid_id"] = None
-                        # ✅ 표 클릭 이동도 마찬가지로 fast mode
                         st.session_state["MV_FAST_MODE"] = True
             except Exception:
                 pass
@@ -749,3 +748,190 @@ def cpo_page(supabase, station: str, role: str):
         except TypeError:
             st.dataframe(display_df, use_container_width=True, height=420, hide_index=True)
             st.caption("※ 표 클릭으로 지도 이동 기능은 Streamlit 최신 버전에서만 동작합니다.")
+
+    st.divider()
+
+    # =========================================================
+    # 설문 수정 / 삭제 (복원)
+    # =========================================================
+    st.subheader("✏️ 설문 수정 / 삭제")
+
+    if shops_df.empty:
+        st.info("수정/삭제할 설문 점포가 없습니다.")
+        return
+
+    edit_df = shops_df.copy().reset_index(drop=True)
+    edit_df["__id_str__"] = edit_df["id"].astype(str)
+
+    sort_cols = [c for c in ["updated_at"] if c in edit_df.columns]
+    if sort_cols:
+        try:
+            edit_df = edit_df.sort_values(sort_cols, ascending=False).reset_index(drop=True)
+        except Exception:
+            pass
+
+    option_ids = edit_df["__id_str__"].tolist()
+    selected_shop_id = str(st.session_state.get("selected_shop_id") or "")
+
+    if selected_shop_id not in option_ids:
+        selected_shop_id = option_ids[0]
+        st.session_state["selected_shop_id"] = selected_shop_id
+
+    def _shop_label(shop_id_str: str) -> str:
+        try:
+            row = edit_df[edit_df["__id_str__"] == shop_id_str].iloc[0].to_dict()
+            return f"{safe_str(row.get('station'))} · {safe_str(row.get('shop_name'))} · {safe_str(row.get('address'))}"
+        except Exception:
+            return shop_id_str
+
+    selected_shop_id = st.selectbox(
+        "수정할 점포 선택",
+        options=option_ids,
+        index=option_ids.index(selected_shop_id),
+        format_func=_shop_label,
+        key="edit_shop_selectbox",
+    )
+    st.session_state["selected_shop_id"] = str(selected_shop_id)
+
+    selected_rows = edit_df[edit_df["__id_str__"] == str(selected_shop_id)]
+    if selected_rows.empty:
+        st.warning("선택한 점포 정보를 찾을 수 없습니다.")
+        return
+
+    shop_row = selected_rows.iloc[0].to_dict()
+
+    info1, info2, info3 = st.columns(3)
+    with info1:
+        st.caption("관서")
+        st.write(safe_str(shop_row.get("station"), "-"))
+    with info2:
+        st.caption("그리드ID")
+        st.write(safe_str(shop_row.get("grid_id"), "-"))
+    with info3:
+        st.caption("최종 수정일")
+        st.write(safe_str(shop_row.get("updated_at"), "-"))
+
+    with st.form(key=f"edit_shop_form_{selected_shop_id}"):
+        c1, c2 = st.columns(2)
+
+        with c1:
+            edit_shop_name = st.text_input("점포명", value=safe_str(shop_row.get("shop_name"), ""))
+            edit_address = st.text_input("주소", value=safe_str(shop_row.get("address"), ""))
+            edit_phone = st.text_input(
+                "점포 연락처",
+                value=safe_str(shop_row.get("phone"), safe_str(shop_row.get("tel"), "")),
+            )
+            edit_owner_phone = st.text_input(
+                "점주 연락처",
+                value=safe_str(shop_row.get("owner_phone"), "")
+            )
+            edit_officer_rank = st.text_input("담당자 계급", value=safe_str(shop_row.get("officer_rank"), ""))
+            edit_officer_name = st.text_input("담당자 성명", value=safe_str(shop_row.get("officer_name"), ""))
+
+        with c2:
+            edit_current_score = st.number_input(
+                "체감안전도/주관점수",
+                min_value=0,
+                max_value=100,
+                value=int(pick_current_score(shop_row, 50)),
+                step=1,
+            )
+            edit_uses_security_company = st.checkbox(
+                "보안업체 이용",
+                value=safe_bool(shop_row.get("uses_security_company"), False)
+            )
+            edit_has_emergency_bell = st.checkbox(
+                "점포 비상벨 보유",
+                value=safe_bool(shop_row.get("has_emergency_bell"), False)
+            )
+            edit_has_cctv = st.checkbox(
+                "점포 CCTV 보유",
+                value=safe_bool(shop_row.get("has_cctv"), False)
+            )
+            edit_other_security = st.text_area(
+                "기타 보안시설",
+                value=safe_str(shop_row.get("other_security"), ""),
+                height=100
+            )
+            edit_cpo_comment = st.text_area(
+                "CPO 의견",
+                value=safe_str(shop_row.get("cpo_comment"), ""),
+                height=100
+            )
+
+        save_col, delete_col = st.columns(2)
+        save_clicked = save_col.form_submit_button("💾 수정 저장", use_container_width=True)
+        delete_clicked = delete_col.form_submit_button("🗑️ 삭제 요청", use_container_width=True)
+
+    if save_clicked:
+        payload = {}
+
+        if "shop_name" in edit_df.columns:
+            payload["shop_name"] = edit_shop_name.strip()
+        if "address" in edit_df.columns:
+            payload["address"] = edit_address.strip()
+
+        if "phone" in edit_df.columns:
+            payload["phone"] = edit_phone.strip()
+        if "tel" in edit_df.columns and "phone" not in edit_df.columns:
+            payload["tel"] = edit_phone.strip()
+
+        if "owner_phone" in edit_df.columns:
+            payload["owner_phone"] = edit_owner_phone.strip()
+
+        if "officer_rank" in edit_df.columns:
+            payload["officer_rank"] = edit_officer_rank.strip()
+        if "officer_name" in edit_df.columns:
+            payload["officer_name"] = edit_officer_name.strip()
+
+        if "perceived_safety" in edit_df.columns:
+            payload["perceived_safety"] = int(edit_current_score)
+        elif "subjective_score" in edit_df.columns:
+            payload["subjective_score"] = int(edit_current_score)
+        elif "safety_score" in edit_df.columns:
+            payload["safety_score"] = int(edit_current_score)
+
+        if "uses_security_company" in edit_df.columns:
+            payload["uses_security_company"] = bool(edit_uses_security_company)
+        if "has_emergency_bell" in edit_df.columns:
+            payload["has_emergency_bell"] = bool(edit_has_emergency_bell)
+        if "has_cctv" in edit_df.columns:
+            payload["has_cctv"] = bool(edit_has_cctv)
+        if "other_security" in edit_df.columns:
+            payload["other_security"] = edit_other_security.strip()
+        if "cpo_comment" in edit_df.columns:
+            payload["cpo_comment"] = edit_cpo_comment.strip()
+        if "updated_at" in edit_df.columns:
+            payload["updated_at"] = datetime.now().isoformat()
+
+        try:
+            supabase.table("shops").update(payload).eq("id", shop_row["id"]).execute()
+            st.success("점포 설문이 수정되었습니다.")
+            st.session_state["MV_FAST_MODE"] = True
+            time.sleep(0.3)
+            st.rerun()
+        except Exception as e:
+            st.error(f"수정 실패: {e}")
+
+    if delete_clicked:
+        st.session_state["delete_target_shop_id"] = str(selected_shop_id)
+
+    if st.session_state.get("delete_target_shop_id") == str(selected_shop_id):
+        st.warning("정말 삭제하시려면 아래 '최종 삭제'를 누르세요. 삭제 후 복구가 어렵습니다.")
+        d1, d2 = st.columns(2)
+
+        if d1.button("🚨 최종 삭제", key=f"delete_final_{selected_shop_id}", use_container_width=True):
+            try:
+                supabase.table("shops").delete().eq("id", shop_row["id"]).execute()
+                st.success("점포 설문이 삭제되었습니다.")
+                st.session_state.pop("delete_target_shop_id", None)
+                st.session_state.pop("selected_shop_id", None)
+                st.session_state["MV_FAST_MODE"] = True
+                time.sleep(0.3)
+                st.rerun()
+            except Exception as e:
+                st.error(f"삭제 실패: {e}")
+
+        if d2.button("취소", key=f"delete_cancel_{selected_shop_id}", use_container_width=True):
+            st.session_state.pop("delete_target_shop_id", None)
+            st.rerun()
