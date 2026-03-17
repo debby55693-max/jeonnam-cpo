@@ -219,7 +219,6 @@ def field_public_page(supabase):
     with colB:
         owner_phone = st.text_input("점주 전화번호 (선택)", placeholder="010-1234-5678")
 
-    # ✅ 동글뱅이(라디오) 선택
     owner_gender = st.radio("성별", ["남", "여"], horizontal=True)
 
     st.caption("연령대(선택)")
@@ -234,18 +233,16 @@ def field_public_page(supabase):
 
     st.subheader("③ 운영/시설/보안 현황")
 
-    # ✅ 영업시간(간략 라디오)
     st.caption("영업시간(간략 선택)")
     biz_hours = st.radio(
         "영업시간",
         ["24시간", "주간(09~18)", "야간(18~24)", "심야(22~02)", "직접입력"],
         horizontal=True,
-        index=1,  # 기본값: 주간
+        index=1,
         key="biz_hours",
         label_visibility="collapsed",
     )
 
-    # 직접입력 선택 시만 시간 입력
     open_t, close_t = None, None
     if biz_hours == "직접입력":
         c1, c2 = st.columns(2)
@@ -267,7 +264,6 @@ def field_public_page(supabase):
     )
     employment_type = None if employment_type_choice == "선택안함" else employment_type_choice
 
-    # ✅ 추가 설문(최소세트 6개) - 전부 라디오(동글뱅이)
     st.subheader("③-1 추가 점검 항목(간단 선택)")
 
     st.caption("업종")
@@ -321,17 +317,9 @@ def field_public_page(supabase):
         label_visibility="collapsed",
     )
 
-    st.caption("CCTV 작동 확인")
-    cctv_check = st.radio(
-        "CCTV 작동",
-        ["미확인", "정상", "불량"],
-        horizontal=True,
-        index=0,
-        key="cctv_check",
-        label_visibility="collapsed",
-    )
+    # ✅ 변경: CCTV 작동확인 -> 매장 내 CCTV 보유 여부
+    has_cctv = st.checkbox("매장 내 CCTV 보유 여부")
 
-    # ✅ 사설경비(보안업체) 이용 여부: 라디오
     st.caption("사설경비(보안업체) 이용 여부(선택)")
     security_status = st.radio(
         "보안업체",
@@ -345,9 +333,8 @@ def field_public_page(supabase):
     if security_status == "이용 중":
         security_company_name = st.text_input("경비업체명(선택)", key="security_company_name")
 
-    # 기존 점수 반영 체크는 유지
-    has_emergency_bell = st.checkbox("비상벨 보유 여부 (체감안전도 점수에서 -10 반영)")
-    has_cctv = st.checkbox("CCTV 보유 여부 (체감안전도 점수에서 -10 반영)")
+    # ✅ 변경: 괄호 문구 제거
+    has_emergency_bell = st.checkbox("비상벨 보유 여부")
 
     other_security = st.text_area("기타 보안시설 (선택)", placeholder="예) 방범창, 자동문, 출입통제 등")
 
@@ -363,23 +350,6 @@ def field_public_page(supabase):
     perceived_safety = int(LEVEL_TO_SCORE[level])
 
     overall_comment = st.text_area("추가 의견 (선택)")
-
-    # ==================================================
-    # ✅ 즉시 반응 미리보기
-    # ==================================================
-    resident_adj_preview = max(
-        0,
-        perceived_safety
-        - (10 if has_emergency_bell else 0)
-        - (10 if has_cctv else 0)
-    )
-    reflected_risk_preview = 100 - resident_adj_preview  # 우선순위 반영값(불안도)
-    st.info(
-        f"✅ 미리보기(즉시 반응)\n\n"
-        f"- 저장될 체감안전도 점수(perceived_safety): {perceived_safety}\n"
-        f"- 감점 반영 후 주관점수(resident_adj): {resident_adj_preview}\n"
-        f"- 우선순위 반영값(불안도 = 100 - resident_adj): {reflected_risk_preview}"
-    )
 
     st.divider()
 
@@ -415,8 +385,6 @@ def field_public_page(supabase):
         if phone and not PHONE_RE.match(phone):
             st.warning("전화번호 형식이 이상합니다. 예: 010-1234-5678 (그래도 저장은 진행)")
 
-        # ✅ DB 컬럼 깨질 위험 때문에 새 컬럼은 추가하지 않음
-        # - uses_security_company: boolean 유지 (이용 중이면 True)
         uses_security_company = (security_status == "이용 중")
 
         # ✅ 추가 설문 결과를 overall_comment에 구조화 텍스트로 합침(DB 변경 없이 저장)
@@ -427,7 +395,7 @@ def field_public_page(supabase):
             f"주변환경={surroundings}",
             f"사각지대={blind_spot}",
             f"조명={lighting}",
-            f"CCTV작동확인={cctv_check}",
+            f"매장내CCTV={'있음' if has_cctv else '없음'}",
             f"영업시간선택={biz_hours}",
         ]
 
@@ -441,14 +409,12 @@ def field_public_page(supabase):
 
         extra_block = "\n".join(extra_block_lines)
 
-        # overall_comment에 붙이기
         overall_comment_final = (overall_comment or "").strip()
         if overall_comment_final:
             overall_comment_final = f"{overall_comment_final}\n\n{extra_block}"
         else:
             overall_comment_final = extra_block
 
-        # 경비업체명은 기존 other_security에도 합쳐 저장(혹시 현장에서 찾기 쉽게)
         other_security_final = (other_security or "").strip()
         if security_company_name and security_company_name.strip():
             line = f"경비업체명: {security_company_name.strip()}"
@@ -462,12 +428,10 @@ def field_public_page(supabase):
             "address": selected_addr,
             "station": officer_station,
 
-            # ✅ 주소 기반 좌표
             "lat": float(lat),
             "lon": float(lon),
             "lng": float(lon),
 
-            # ✅ 주소 기반 grid_id
             "grid_id": grid_id,
 
             "annual_sales": int(annual_sales) if annual_sales else 0,
@@ -478,7 +442,6 @@ def field_public_page(supabase):
             "has_cctv": bool(has_cctv),
             "other_security": other_security_final if other_security_final else None,
 
-            # ✅ 설문 점수
             "perceived_safety": int(perceived_safety),
 
             "overall_comment": overall_comment_final if overall_comment_final else None,
