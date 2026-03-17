@@ -74,23 +74,46 @@ def vworld_geocode(address: str, addr_type: str = "road"):
     VWorld 주소→좌표 변환
     - addr_type: "road"(도로명) / "parcel"(지번)
     - EPSG:4326(WGS84)
-    - 반환: (lat, lon) 또는 (None, None)
+    - 반환: (lat, lon, debug_dict)
     """
     key = _get_vworld_key()
-    if not key:
-        st.error("secrets.toml에 VWorld 키가 없습니다. (예: VWORLD_KEY)")
-        return None, None
+    debug = {
+        "request_address_raw": address,
+        "request_address_cleaned": _clean_addr_for_geocode(address),
+        "request_type": addr_type,
+        "has_key": bool(key),
+        "http_status": None,
+        "response_status": None,
+        "error_code": None,
+        "error_text": None,
+        "refined_text": None,
+        "point_x": None,
+        "point_y": None,
+        "exception": None,
+        "raw_response": None,
+    }
 
-    addr = _clean_addr_for_geocode(address)
+    if not key:
+        debug["error_code"] = "NO_KEY"
+        debug["error_text"] = "secrets.toml에 VWorld 키가 없습니다. (예: VWORLD_KEY)"
+        return None, None, debug
+
+    addr = debug["request_address_cleaned"]
     if not addr:
-        return None, None
+        debug["error_code"] = "EMPTY_ADDRESS"
+        debug["error_text"] = "좌표 변환용 주소가 비어 있습니다."
+        return None, None, debug
 
     url = "https://api.vworld.kr/req/address"
     params = {
         "service": "address",
         "request": "getcoord",
+        "version": "2.0",
         "format": "json",
+        "errorformat": "json",
         "crs": "epsg:4326",
+        "refine": "true",
+        "simple": "false",
         "address": addr,
         "type": addr_type,   # road / parcel
         "key": key,
@@ -98,25 +121,67 @@ def vworld_geocode(address: str, addr_type: str = "road"):
 
     try:
         r = requests.get(url, params=params, timeout=10)
+        debug["http_status"] = r.status_code
         r.raise_for_status()
+
         data = r.json()
+        debug["raw_response"] = data
 
-        resp = data.get("response", {})
+        resp = data.get("response", {}) if isinstance(data, dict) else {}
+        debug["response_status"] = resp.get("status")
+
+        err = resp.get("error", {}) if isinstance(resp, dict) else {}
+        if isinstance(err, dict):
+            debug["error_code"] = err.get("code")
+            debug["error_text"] = err.get("text")
+
+        refined = resp.get("refined", {}) if isinstance(resp, dict) else {}
+        if isinstance(refined, dict):
+            debug["refined_text"] = refined.get("text")
+
         if resp.get("status") != "OK":
-            return None, None
+            return None, None, debug
 
-        result = resp.get("result", {})
+        result = resp.get("result", {}) if isinstance(resp, dict) else {}
         point = result.get("point", {}) if isinstance(result, dict) else {}
+
         lon = point.get("x")
         lat = point.get("y")
+        debug["point_x"] = lon
+        debug["point_y"] = lat
 
         if lon is None or lat is None:
-            return None, None
+            debug["error_code"] = debug["error_code"] or "NO_POINT"
+            debug["error_text"] = debug["error_text"] or "응답은 왔지만 좌표(point)가 없습니다."
+            return None, None, debug
 
-        return float(lat), float(lon)
+        return float(lat), float(lon), debug
 
-    except Exception:
-        return None, None
+    except Exception as e:
+        debug["exception"] = str(e)
+        return None, None, debug
+
+
+def _render_geo_debug():
+    debug = st.session_state.get("geo_debug") or {}
+    if not debug:
+        return
+
+    with st.expander("좌표 변환 디버그 보기", expanded=False):
+        road_debug = debug.get("road", {})
+        parcel_debug = debug.get("parcel", {})
+
+        st.markdown("**도로명 주소 변환 시도**")
+        if road_debug:
+            st.json(road_debug)
+        else:
+            st.caption("도로명 주소 시도 정보 없음")
+
+        st.markdown("**지번 주소 변환 시도**")
+        if parcel_debug:
+            st.json(parcel_debug)
+        else:
+            st.caption("지번 주소 시도 정보 없음")
 
 
 # =========================================================
@@ -140,6 +205,9 @@ def field_public_page(supabase):
 
     # 계산된 grid_id
     st.session_state.setdefault("auto_grid_id", "")
+
+    # 디버그
+    st.session_state.setdefault("geo_debug", {})
 
     # ==================================================
     # 0) 주소 검색/선택
@@ -181,10 +249,23 @@ def field_public_page(supabase):
 
         # ✅ 좌표 자동 계산 (road → 실패 시 parcel)
         addr_for_geo = st.session_state["selected_address"]
-        lat, lon = vworld_geocode(addr_for_geo, "road")
+        lat, lon, road_debug = vworld_geocode(addr_for_geo, "road")
+
+        parcel_debug = {}
         if lat is None or lon is None:
             jibun_for_geo = st.session_state.get("selected_jibun", "")
-            lat, lon = vworld_geocode(jibun_for_geo, "parcel") if jibun_for_geo else (None, None)
+            if jibun_for_geo:
+                lat, lon, parcel_debug = vworld_geocode(jibun_for_geo, "parcel")
+            else:
+                parcel_debug = {
+                    "error_code": "NO_JIBUN",
+                    "error_text": "지번 주소가 없어 parcel 재시도를 하지 않았습니다."
+                }
+
+        st.session_state["geo_debug"] = {
+            "road": road_debug,
+            "parcel": parcel_debug,
+        }
 
         st.session_state["auto_lat"] = lat
         st.session_state["auto_lon"] = lon
@@ -194,17 +275,28 @@ def field_public_page(supabase):
             try:
                 gid = latlon_to_grid_id_100m(float(lat), float(lon))
                 st.session_state["auto_grid_id"] = gid
-            except Exception:
+            except Exception as e:
                 st.session_state["auto_grid_id"] = ""
+                st.warning(f"좌표는 얻었지만 grid_id 계산 실패: {e}")
         else:
             st.session_state["auto_grid_id"] = ""
 
     selected_addr = st.session_state.get("selected_address", "").strip()
+    auto_lat = st.session_state.get("auto_lat")
+    auto_lon = st.session_state.get("auto_lon")
+    auto_grid_id = st.session_state.get("auto_grid_id", "")
+
+    if selected_addr:
+        if auto_lat is not None and auto_lon is not None:
+            st.success(f"좌표 변환 성공: lat={auto_lat}, lon={auto_lon}, grid_id={auto_grid_id}")
+        else:
+            st.error("주소 선택은 되었지만 좌표 변환이 실패했습니다. 아래 디버그를 확인해 주세요.")
+            _render_geo_debug()
 
     st.divider()
 
     # ==================================================
-    # 1) 설문 입력 (st.form 제거: 즉시 반응)
+    # 1) 설문 입력
     # ==================================================
     st.subheader("① 현장 관서 정보 (필수)")
     officer_station = st.selectbox("관서 *", JEONNAM_POLICE_STATIONS)
@@ -359,7 +451,6 @@ def field_public_page(supabase):
             st.warning("잠시 후 다시 시도해 주세요. (연속 제출 방지)")
             st.stop()
 
-        # 필수 체크
         if not selected_addr:
             st.error("주소 검색 후 결과에서 주소를 선택해야 합니다.")
             st.stop()
@@ -367,7 +458,8 @@ def field_public_page(supabase):
         lat = st.session_state.get("auto_lat")
         lon = st.session_state.get("auto_lon")
         if lat is None or lon is None:
-            st.error("주소 기반 좌표 산출 실패로 저장할 수 없습니다. (주소를 더 정확히 검색/선택해 주세요)")
+            st.error("주소 기반 좌표 산출 실패로 저장할 수 없습니다. 아래 디버그를 확인해 주세요.")
+            _render_geo_debug()
             st.stop()
 
         grid_id = (st.session_state.get("auto_grid_id") or "").strip()
@@ -384,7 +476,6 @@ def field_public_page(supabase):
 
         uses_security_company = (security_status == "이용 중")
 
-        # ✅ 추가 설문 결과를 overall_comment에 구조화 텍스트로 합침(DB 변경 없이 저장)
         extra_block_lines = [
             "[추가설문]",
             f"업종={biz_type}",
