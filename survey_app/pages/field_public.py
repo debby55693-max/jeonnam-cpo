@@ -317,9 +317,6 @@ def field_public_page(supabase):
         label_visibility="collapsed",
     )
 
-    # ✅ 변경: CCTV 작동확인 -> 매장 내 CCTV 보유 여부
-    has_cctv = st.checkbox("매장 내 CCTV 보유 여부")
-
     st.caption("사설경비(보안업체) 이용 여부(선택)")
     security_status = st.radio(
         "보안업체",
@@ -333,7 +330,7 @@ def field_public_page(supabase):
     if security_status == "이용 중":
         security_company_name = st.text_input("경비업체명(선택)", key="security_company_name")
 
-    # ✅ 변경: 괄호 문구 제거
+    has_cctv = st.checkbox("매장 내 CCTV 보유 여부")
     has_emergency_bell = st.checkbox("비상벨 보유 여부")
 
     other_security = st.text_area("기타 보안시설 (선택)", placeholder="예) 방범창, 자동문, 출입통제 등")
@@ -395,15 +392,15 @@ def field_public_page(supabase):
             f"주변환경={surroundings}",
             f"사각지대={blind_spot}",
             f"조명={lighting}",
+            f"사설경비={security_status}",
             f"매장내CCTV={'있음' if has_cctv else '없음'}",
+            f"비상벨보유={'있음' if has_emergency_bell else '없음'}",
             f"영업시간선택={biz_hours}",
         ]
 
         if biz_hours == "직접입력" and open_t and close_t:
             extra_block_lines.append(f"영업시간직접입력={open_t.strftime('%H:%M')}~{close_t.strftime('%H:%M')}")
 
-        if security_status:
-            extra_block_lines.append(f"사설경비={security_status}")
         if security_company_name and security_company_name.strip():
             extra_block_lines.append(f"경비업체명={security_company_name.strip()}")
 
