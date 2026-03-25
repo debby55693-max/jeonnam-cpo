@@ -19,7 +19,10 @@ JEONNAM_POLICE_STATIONS = [
 
 PHONE_RE = re.compile(r"^01[0-9]-?\d{3,4}-?\d{4}$")
 
-# ✅ VWorld 재시도 설정
+# ✅ 재시도 설정
+JUSO_RETRY_COUNT = 2
+JUSO_RETRY_WAIT_SEC = 1.0
+
 VWORLD_RETRY_COUNT = 3
 VWORLD_RETRY_WAIT_SEC = 1.0
 
@@ -34,7 +37,7 @@ def _clean_phone(v: str) -> str:
 # =========================================================
 def juso_search(keyword: str, page: int = 1, size: int = 10):
     """JUSO 도로명주소 검색 API (JSON)"""
-    confm_key = st.secrets.get("JUSO_CONFM_KEY", "").strip()
+    confm_key = str(st.secrets.get("JUSO_CONFM_KEY", "")).strip()
     if not confm_key:
         st.error("secrets.toml에 JUSO_CONFM_KEY가 없습니다.")
         return []
@@ -76,7 +79,9 @@ def juso_coord_search(juso_item: dict):
     좌표제공 API(addrCoordApi.do) 호출
     반환: (lat, lon, debug_dict)
     """
-    confm_key = st.secrets.get("JUSO_CONFM_KEY", "").strip()
+    # ✅ 여기 핵심 수정: 주소검색용 키가 아니라 좌표제공용 키를 읽어야 함
+    confm_key = str(st.secrets.get("JUSO_COORD_CONFM_KEY", "")).strip()
+
     debug = {
         "api": "juso_addrCoordApi",
         "has_key": bool(confm_key),
@@ -95,11 +100,12 @@ def juso_coord_search(juso_item: dict):
         "transform_error": None,
         "raw_response": None,
         "exception": None,
+        "attempts": [],
     }
 
     if not confm_key:
         debug["errorCode"] = "NO_KEY"
-        debug["errorMessage"] = "JUSO_CONFM_KEY가 없습니다."
+        debug["errorMessage"] = "JUSO_COORD_CONFM_KEY가 없습니다."
         return None, None, debug
 
     adm_cd = str((juso_item or {}).get("admCd") or "").strip()
@@ -124,60 +130,94 @@ def juso_coord_search(juso_item: dict):
         "resultType": "json",
     }
 
-    try:
-        r = requests.get(url, params=params, timeout=10)
-        debug["http_status"] = r.status_code
-        r.raise_for_status()
+    for attempt in range(1, JUSO_RETRY_COUNT + 1):
+        attempt_log = {
+            "attempt": attempt,
+            "http_status": None,
+            "exception": None,
+        }
+        try:
+            r = requests.get(url, params=params, timeout=10)
+            attempt_log["http_status"] = r.status_code
+            debug["http_status"] = r.status_code
+            r.raise_for_status()
 
-        data = r.json()
-        debug["raw_response"] = data
+            data = r.json()
+            debug["raw_response"] = data
 
-        results = data.get("results", {}) if isinstance(data, dict) else {}
-        common = results.get("common", {}) if isinstance(results, dict) else {}
-        debug["errorCode"] = common.get("errorCode")
-        debug["errorMessage"] = common.get("errorMessage")
+            results = data.get("results", {}) if isinstance(data, dict) else {}
+            common = results.get("common", {}) if isinstance(results, dict) else {}
+            debug["errorCode"] = common.get("errorCode")
+            debug["errorMessage"] = common.get("errorMessage")
 
-        if str(common.get("errorCode")) != "0":
+            debug["attempts"].append(attempt_log)
+
+            if str(common.get("errorCode")) != "0":
+                return None, None, debug
+
+            juso_list = results.get("juso", []) or []
+            if not juso_list:
+                debug["errorCode"] = "NO_RESULT"
+                debug["errorMessage"] = "좌표 API 결과가 없습니다."
+                return None, None, debug
+
+            first = juso_list[0]
+            ent_x = first.get("entX")
+            ent_y = first.get("entY")
+            debug["entX"] = ent_x
+            debug["entY"] = ent_y
+
+            if ent_x in [None, ""] or ent_y in [None, ""]:
+                debug["errorCode"] = "NO_COORD"
+                debug["errorMessage"] = "좌표 API 결과에 entX/entY가 없습니다."
+                return None, None, debug
+
+            lat, lon, transform_error = _epsg5179_to_wgs84(ent_x, ent_y)
+            debug["transform_error"] = transform_error
+            debug["lat"] = lat
+            debug["lon"] = lon
+
+            if lat is None or lon is None:
+                debug["errorCode"] = "TRANSFORM_FAIL"
+                debug["errorMessage"] = "EPSG:5179 → WGS84 변환 실패"
+                return None, None, debug
+
+            return lat, lon, debug
+
+        except requests.HTTPError as e:
+            attempt_log["exception"] = str(e)
+            debug["exception"] = str(e)
+            debug["attempts"].append(attempt_log)
+
+            if debug["http_status"] in [500, 502, 503, 504] and attempt < JUSO_RETRY_COUNT:
+                time.sleep(JUSO_RETRY_WAIT_SEC)
+                continue
             return None, None, debug
 
-        juso_list = results.get("juso", []) or []
-        if not juso_list:
-            debug["errorCode"] = "NO_RESULT"
-            debug["errorMessage"] = "좌표 API 결과가 없습니다."
+        except requests.RequestException as e:
+            attempt_log["exception"] = str(e)
+            debug["exception"] = str(e)
+            debug["attempts"].append(attempt_log)
+
+            if attempt < JUSO_RETRY_COUNT:
+                time.sleep(JUSO_RETRY_WAIT_SEC)
+                continue
             return None, None, debug
 
-        first = juso_list[0]
-        ent_x = first.get("entX")
-        ent_y = first.get("entY")
-        debug["entX"] = ent_x
-        debug["entY"] = ent_y
-
-        if ent_x in [None, ""] or ent_y in [None, ""]:
-            debug["errorCode"] = "NO_COORD"
-            debug["errorMessage"] = "좌표 API 결과에 entX/entY가 없습니다."
+        except Exception as e:
+            attempt_log["exception"] = str(e)
+            debug["exception"] = str(e)
+            debug["attempts"].append(attempt_log)
             return None, None, debug
 
-        lat, lon, transform_error = _epsg5179_to_wgs84(ent_x, ent_y)
-        debug["transform_error"] = transform_error
-        debug["lat"] = lat
-        debug["lon"] = lon
-
-        if lat is None or lon is None:
-            debug["errorCode"] = "TRANSFORM_FAIL"
-            debug["errorMessage"] = "EPSG:5179 → WGS84 변환 실패"
-            return None, None, debug
-
-        return lat, lon, debug
-
-    except Exception as e:
-        debug["exception"] = str(e)
-        return None, None, debug
+    return None, None, debug
 
 
 # =========================================================
 # VWorld: 키 가져오기 & 주소 정리 (fallback 전용)
 # =========================================================
 def _get_vworld_key() -> str:
+    # ✅ 별칭 남겨두긴 하지만, 실제론 VWORLD_KEY 하나만 쓰는 걸 권장
     for k in ["VWORLD_KEY", "VWORLD_API_KEY", "VWorld_KEY", "vworld_key"]:
         v = st.secrets.get(k)
         if v and str(v).strip():
@@ -295,8 +335,18 @@ def vworld_geocode(address: str, addr_type: str = "road"):
             debug["exception"] = str(e)
             debug["attempts"].append(attempt_log)
 
-            # 5xx 서버오류일 때만 재시도
             if debug["http_status"] in [500, 502, 503, 504] and attempt < VWORLD_RETRY_COUNT:
+                time.sleep(VWORLD_RETRY_WAIT_SEC)
+                continue
+            return None, None, debug
+
+        except requests.RequestException as e:
+            attempt_log["exception"] = str(e)
+            debug["exception"] = str(e)
+            debug["attempts"].append(attempt_log)
+
+            # ✅ 연결 끊김도 재시도
+            if attempt < VWORLD_RETRY_COUNT:
                 time.sleep(VWORLD_RETRY_WAIT_SEC)
                 continue
             return None, None, debug
@@ -339,6 +389,72 @@ def _render_geo_debug():
             st.caption("VWorld 지번 시도 정보 없음")
 
 
+def _make_geo_request_key(juso_item: dict) -> str:
+    """
+    같은 주소에 대해 rerun 때마다 좌표 API를 반복 호출하지 않기 위한 키
+    """
+    j = juso_item or {}
+    parts = [
+        str(j.get("roadAddr") or "").strip(),
+        str(j.get("jibunAddr") or "").strip(),
+        str(j.get("zipNo") or "").strip(),
+        str(j.get("admCd") or "").strip(),
+        str(j.get("rnMgtSn") or "").strip(),
+        str(j.get("udrtYn") or "").strip(),
+        str(j.get("buldMnnm") or "").strip(),
+        str(j.get("buldSlno") or "").strip(),
+    ]
+    return "|".join(parts)
+
+
+def _run_geocode_once(picked_j: dict):
+    """
+    실제 좌표 변환 수행 (한 번만)
+    """
+    lat, lon, juso_debug = juso_coord_search(picked_j)
+    road_debug = {}
+    parcel_debug = {}
+    coord_source = ""
+
+    if lat is not None and lon is not None:
+        coord_source = "JUSO 좌표제공 API"
+    else:
+        addr_for_geo = st.session_state.get("selected_address", "")
+        lat, lon, road_debug = vworld_geocode(addr_for_geo, "road")
+        if lat is not None and lon is not None:
+            coord_source = "VWorld 도로명"
+        else:
+            jibun_for_geo = st.session_state.get("selected_jibun", "")
+            if jibun_for_geo:
+                lat, lon, parcel_debug = vworld_geocode(jibun_for_geo, "parcel")
+                if lat is not None and lon is not None:
+                    coord_source = "VWorld 지번"
+            else:
+                parcel_debug = {
+                    "error_code": "NO_JIBUN",
+                    "error_text": "지번 주소가 없어 parcel 재시도를 하지 않았습니다."
+                }
+
+    st.session_state["geo_debug"] = {
+        "juso_coord": juso_debug,
+        "road": road_debug,
+        "parcel": parcel_debug,
+    }
+    st.session_state["coord_source"] = coord_source
+    st.session_state["auto_lat"] = lat
+    st.session_state["auto_lon"] = lon
+
+    if lat is not None and lon is not None:
+        try:
+            gid = latlon_to_grid_id_100m(float(lat), float(lon))
+            st.session_state["auto_grid_id"] = gid
+        except Exception as e:
+            st.session_state["auto_grid_id"] = ""
+            st.warning(f"좌표는 얻었지만 grid_id 계산 실패: {e}")
+    else:
+        st.session_state["auto_grid_id"] = ""
+
+
 # =========================================================
 # 페이지 본문
 # =========================================================
@@ -355,6 +471,7 @@ def field_public_page(supabase):
     st.session_state.setdefault("auto_grid_id", "")
     st.session_state.setdefault("geo_debug", {})
     st.session_state.setdefault("coord_source", "")
+    st.session_state.setdefault("last_geo_request_key", "")
 
     # ==================================================
     # 0) 주소 검색/선택
@@ -373,6 +490,18 @@ def field_public_page(supabase):
             try:
                 candidates = juso_search(addr_query.strip(), page=1, size=10)
                 st.session_state["addr_candidates"] = candidates
+
+                # ✅ 새 검색 시 이전 좌표 상태 초기화
+                st.session_state["selected_address"] = ""
+                st.session_state["selected_jibun"] = ""
+                st.session_state["selected_zipno"] = ""
+                st.session_state["auto_lat"] = None
+                st.session_state["auto_lon"] = None
+                st.session_state["auto_grid_id"] = ""
+                st.session_state["geo_debug"] = {}
+                st.session_state["coord_source"] = ""
+                st.session_state["last_geo_request_key"] = ""
+
             except Exception as e:
                 st.error(f"주소 검색 실패: {e}")
                 st.session_state["addr_candidates"] = []
@@ -394,54 +523,13 @@ def field_public_page(supabase):
         st.session_state["selected_jibun"] = (picked_j.get("jibunAddr") or "").strip()
         st.session_state["selected_zipno"] = (picked_j.get("zipNo") or "").strip()
 
-        # ==================================================
-        # ✅ 1순위: JUSO 좌표제공 API
-        # ==================================================
-        lat, lon, juso_debug = juso_coord_search(picked_j)
-        road_debug = {}
-        parcel_debug = {}
-        coord_source = ""
+        # ✅ 핵심 수정: 같은 주소에 대해 rerun마다 좌표 API를 다시 호출하지 않음
+        current_geo_request_key = _make_geo_request_key(picked_j)
+        last_geo_request_key = st.session_state.get("last_geo_request_key", "")
 
-        if lat is not None and lon is not None:
-            coord_source = "JUSO 좌표제공 API"
-        else:
-            # ==================================================
-            # ✅ 2순위: VWorld 도로명 -> 지번 fallback
-            # ==================================================
-            addr_for_geo = st.session_state["selected_address"]
-            lat, lon, road_debug = vworld_geocode(addr_for_geo, "road")
-            if lat is not None and lon is not None:
-                coord_source = "VWorld 도로명"
-            else:
-                jibun_for_geo = st.session_state.get("selected_jibun", "")
-                if jibun_for_geo:
-                    lat, lon, parcel_debug = vworld_geocode(jibun_for_geo, "parcel")
-                    if lat is not None and lon is not None:
-                        coord_source = "VWorld 지번"
-                else:
-                    parcel_debug = {
-                        "error_code": "NO_JIBUN",
-                        "error_text": "지번 주소가 없어 parcel 재시도를 하지 않았습니다."
-                    }
-
-        st.session_state["geo_debug"] = {
-            "juso_coord": juso_debug,
-            "road": road_debug,
-            "parcel": parcel_debug,
-        }
-        st.session_state["coord_source"] = coord_source
-        st.session_state["auto_lat"] = lat
-        st.session_state["auto_lon"] = lon
-
-        if lat is not None and lon is not None:
-            try:
-                gid = latlon_to_grid_id_100m(float(lat), float(lon))
-                st.session_state["auto_grid_id"] = gid
-            except Exception as e:
-                st.session_state["auto_grid_id"] = ""
-                st.warning(f"좌표는 얻었지만 grid_id 계산 실패: {e}")
-        else:
-            st.session_state["auto_grid_id"] = ""
+        if current_geo_request_key != last_geo_request_key:
+            _run_geocode_once(picked_j)
+            st.session_state["last_geo_request_key"] = current_geo_request_key
 
     selected_addr = st.session_state.get("selected_address", "").strip()
     auto_lat = st.session_state.get("auto_lat")
