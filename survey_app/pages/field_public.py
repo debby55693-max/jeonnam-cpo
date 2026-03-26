@@ -3,6 +3,8 @@ from datetime import datetime
 import re
 import time
 import requests
+import folium
+from streamlit_folium import st_folium
 
 # ✅ 100m 국가지점번호 grid_id 계산
 from core.national_point import latlon_to_grid_id_100m
@@ -19,17 +21,17 @@ JEONNAM_POLICE_STATIONS = [
 
 PHONE_RE = re.compile(r"^01[0-9]-?\d{3,4}-?\d{4}$")
 
-# ✅ 재시도 설정
-JUSO_RETRY_COUNT = 2
-JUSO_RETRY_WAIT_SEC = 1.0
-
-VWORLD_RETRY_COUNT = 3
-VWORLD_RETRY_WAIT_SEC = 1.0
-
 
 def _clean_phone(v: str) -> str:
     v = (v or "").strip()
     return v.replace(" ", "")
+
+
+def _fmt_coord(v):
+    try:
+        return f"{float(v):.6f}"
+    except Exception:
+        return ""
 
 
 # =========================================================
@@ -37,9 +39,9 @@ def _clean_phone(v: str) -> str:
 # =========================================================
 def juso_search(keyword: str, page: int = 1, size: int = 10):
     """JUSO 도로명주소 검색 API (JSON)"""
-    confm_key = str(st.secrets.get("JUSO_CONFM_KEY", "")).strip()
+    confm_key = st.secrets.get("JUSO_CONFM_KEY", "").strip()
     if not confm_key:
-        st.error("secrets.toml에 JUSO_CONFM_KEY가 없습니다.")
+        st.error("secrets.toml에 JUSO_CONFM_KEY가 없습니다. (survey_app/.streamlit/secrets.toml 확인)")
         return []
 
     url = "https://www.juso.go.kr/addrlink/addrLinkApi.do"
@@ -57,167 +59,10 @@ def juso_search(keyword: str, page: int = 1, size: int = 10):
 
 
 # =========================================================
-# JUSO 좌표제공 API (우선 사용)
-# =========================================================
-def _epsg5179_to_wgs84(x: float, y: float):
-    """
-    JUSO 좌표(entX, entY)는 EPSG:5179(UTM-K GRS80)
-    -> WGS84 위경도(lat, lon)로 변환
-    """
-    try:
-        from pyproj import Transformer
-        transformer = Transformer.from_crs("EPSG:5179", "EPSG:4326", always_xy=True)
-        lon, lat = transformer.transform(float(x), float(y))
-        return float(lat), float(lon), None
-    except Exception as e:
-        return None, None, str(e)
-
-
-def juso_coord_search(juso_item: dict):
-    """
-    JUSO 검색 결과의 admCd/rnMgtSn/udrtYn/buldMnnm/buldSlno를 이용해
-    좌표제공 API(addrCoordApi.do) 호출
-    반환: (lat, lon, debug_dict)
-    """
-    # ✅ 여기 핵심 수정: 주소검색용 키가 아니라 좌표제공용 키를 읽어야 함
-    confm_key = str(st.secrets.get("JUSO_COORD_CONFM_KEY", "")).strip()
-
-    debug = {
-        "api": "juso_addrCoordApi",
-        "has_key": bool(confm_key),
-        "admCd": (juso_item or {}).get("admCd"),
-        "rnMgtSn": (juso_item or {}).get("rnMgtSn"),
-        "udrtYn": (juso_item or {}).get("udrtYn"),
-        "buldMnnm": (juso_item or {}).get("buldMnnm"),
-        "buldSlno": (juso_item or {}).get("buldSlno"),
-        "http_status": None,
-        "errorCode": None,
-        "errorMessage": None,
-        "entX": None,
-        "entY": None,
-        "lat": None,
-        "lon": None,
-        "transform_error": None,
-        "raw_response": None,
-        "exception": None,
-        "attempts": [],
-    }
-
-    if not confm_key:
-        debug["errorCode"] = "NO_KEY"
-        debug["errorMessage"] = "JUSO_COORD_CONFM_KEY가 없습니다."
-        return None, None, debug
-
-    adm_cd = str((juso_item or {}).get("admCd") or "").strip()
-    rn_mgt_sn = str((juso_item or {}).get("rnMgtSn") or "").strip()
-    udrt_yn = str((juso_item or {}).get("udrtYn") or "0").strip()
-    buld_mnnm = str((juso_item or {}).get("buldMnnm") or "").strip()
-    buld_slno = str((juso_item or {}).get("buldSlno") or "0").strip()
-
-    if not (adm_cd and rn_mgt_sn and buld_mnnm):
-        debug["errorCode"] = "MISSING_PARAM"
-        debug["errorMessage"] = "좌표 API 필수 파라미터(admCd/rnMgtSn/buldMnnm)가 부족합니다."
-        return None, None, debug
-
-    url = "https://www.juso.go.kr/addrlink/addrCoordApi.do"
-    params = {
-        "confmKey": confm_key,
-        "admCd": adm_cd,
-        "rnMgtSn": rn_mgt_sn,
-        "udrtYn": udrt_yn,
-        "buldMnnm": buld_mnnm,
-        "buldSlno": buld_slno,
-        "resultType": "json",
-    }
-
-    for attempt in range(1, JUSO_RETRY_COUNT + 1):
-        attempt_log = {
-            "attempt": attempt,
-            "http_status": None,
-            "exception": None,
-        }
-        try:
-            r = requests.get(url, params=params, timeout=10)
-            attempt_log["http_status"] = r.status_code
-            debug["http_status"] = r.status_code
-            r.raise_for_status()
-
-            data = r.json()
-            debug["raw_response"] = data
-
-            results = data.get("results", {}) if isinstance(data, dict) else {}
-            common = results.get("common", {}) if isinstance(results, dict) else {}
-            debug["errorCode"] = common.get("errorCode")
-            debug["errorMessage"] = common.get("errorMessage")
-
-            debug["attempts"].append(attempt_log)
-
-            if str(common.get("errorCode")) != "0":
-                return None, None, debug
-
-            juso_list = results.get("juso", []) or []
-            if not juso_list:
-                debug["errorCode"] = "NO_RESULT"
-                debug["errorMessage"] = "좌표 API 결과가 없습니다."
-                return None, None, debug
-
-            first = juso_list[0]
-            ent_x = first.get("entX")
-            ent_y = first.get("entY")
-            debug["entX"] = ent_x
-            debug["entY"] = ent_y
-
-            if ent_x in [None, ""] or ent_y in [None, ""]:
-                debug["errorCode"] = "NO_COORD"
-                debug["errorMessage"] = "좌표 API 결과에 entX/entY가 없습니다."
-                return None, None, debug
-
-            lat, lon, transform_error = _epsg5179_to_wgs84(ent_x, ent_y)
-            debug["transform_error"] = transform_error
-            debug["lat"] = lat
-            debug["lon"] = lon
-
-            if lat is None or lon is None:
-                debug["errorCode"] = "TRANSFORM_FAIL"
-                debug["errorMessage"] = "EPSG:5179 → WGS84 변환 실패"
-                return None, None, debug
-
-            return lat, lon, debug
-
-        except requests.HTTPError as e:
-            attempt_log["exception"] = str(e)
-            debug["exception"] = str(e)
-            debug["attempts"].append(attempt_log)
-
-            if debug["http_status"] in [500, 502, 503, 504] and attempt < JUSO_RETRY_COUNT:
-                time.sleep(JUSO_RETRY_WAIT_SEC)
-                continue
-            return None, None, debug
-
-        except requests.RequestException as e:
-            attempt_log["exception"] = str(e)
-            debug["exception"] = str(e)
-            debug["attempts"].append(attempt_log)
-
-            if attempt < JUSO_RETRY_COUNT:
-                time.sleep(JUSO_RETRY_WAIT_SEC)
-                continue
-            return None, None, debug
-
-        except Exception as e:
-            attempt_log["exception"] = str(e)
-            debug["exception"] = str(e)
-            debug["attempts"].append(attempt_log)
-            return None, None, debug
-
-    return None, None, debug
-
-
-# =========================================================
-# VWorld: 키 가져오기 & 주소 정리 (fallback 전용)
+# VWorld: 키 가져오기 & 주소 정리
 # =========================================================
 def _get_vworld_key() -> str:
-    # ✅ 별칭 남겨두긴 하지만, 실제론 VWORLD_KEY 하나만 쓰는 걸 권장
+    """프로젝트마다 키 이름이 다를 수 있어서 여러 후보를 허용"""
     for k in ["VWORLD_KEY", "VWORLD_API_KEY", "VWorld_KEY", "vworld_key"]:
         v = st.secrets.get(k)
         if v and str(v).strip():
@@ -226,6 +71,7 @@ def _get_vworld_key() -> str:
 
 
 def _clean_addr_for_geocode(addr: str) -> str:
+    """괄호 안(건물명 등) 제거 + 공백 정리"""
     a = (addr or "").strip()
     a = re.sub(r"\(.*?\)", "", a).strip()
     a = re.sub(r"\s+", " ", a).strip()
@@ -235,224 +81,128 @@ def _clean_addr_for_geocode(addr: str) -> str:
 def vworld_geocode(address: str, addr_type: str = "road"):
     """
     VWorld 주소→좌표 변환
-    - addr_type: road / parcel
-    - 반환: (lat, lon, debug_dict)
+    - addr_type: "road"(도로명) / "parcel"(지번)
+    - EPSG:4326(WGS84)
+    - 반환: (lat, lon) 또는 (None, None)
     """
     key = _get_vworld_key()
-    debug = {
-        "api": "vworld_getcoord",
-        "request_address_raw": address,
-        "request_address_cleaned": _clean_addr_for_geocode(address),
-        "request_type": addr_type,
-        "has_key": bool(key),
-        "http_status": None,
-        "response_status": None,
-        "error_code": None,
-        "error_text": None,
-        "refined_text": None,
-        "point_x": None,
-        "point_y": None,
-        "exception": None,
-        "raw_response": None,
-        "attempts": [],
-    }
-
     if not key:
-        debug["error_code"] = "NO_KEY"
-        debug["error_text"] = "secrets.toml에 VWorld 키가 없습니다. (예: VWORLD_KEY)"
-        return None, None, debug
+        st.error("secrets.toml에 VWorld 키가 없습니다. (예: VWORLD_KEY)")
+        return None, None
 
-    addr = debug["request_address_cleaned"]
+    addr = _clean_addr_for_geocode(address)
     if not addr:
-        debug["error_code"] = "EMPTY_ADDRESS"
-        debug["error_text"] = "좌표 변환용 주소가 비어 있습니다."
-        return None, None, debug
+        return None, None
 
     url = "https://api.vworld.kr/req/address"
     params = {
         "service": "address",
         "request": "getcoord",
-        "version": "2.0",
         "format": "json",
-        "errorformat": "json",
         "crs": "epsg:4326",
-        "refine": "true",
-        "simple": "false",
         "address": addr,
-        "type": addr_type,
+        "type": addr_type,   # road / parcel
         "key": key,
     }
 
-    for attempt in range(1, VWORLD_RETRY_COUNT + 1):
-        attempt_log = {
-            "attempt": attempt,
-            "http_status": None,
-            "exception": None,
-        }
-        try:
-            r = requests.get(url, params=params, timeout=10)
-            attempt_log["http_status"] = r.status_code
-            debug["http_status"] = r.status_code
-            r.raise_for_status()
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        r.raise_for_status()
+        data = r.json()
 
-            data = r.json()
-            debug["raw_response"] = data
+        resp = data.get("response", {})
+        if resp.get("status") != "OK":
+            return None, None
 
-            resp = data.get("response", {}) if isinstance(data, dict) else {}
-            debug["response_status"] = resp.get("status")
+        result = resp.get("result", {})
+        point = result.get("point", {}) if isinstance(result, dict) else {}
+        lon = point.get("x")
+        lat = point.get("y")
 
-            err = resp.get("error", {}) if isinstance(resp, dict) else {}
-            if isinstance(err, dict):
-                debug["error_code"] = err.get("code")
-                debug["error_text"] = err.get("text")
+        if lon is None or lat is None:
+            return None, None
 
-            refined = resp.get("refined", {}) if isinstance(resp, dict) else {}
-            if isinstance(refined, dict):
-                debug["refined_text"] = refined.get("text")
+        return float(lat), float(lon)
 
-            debug["attempts"].append(attempt_log)
-
-            if resp.get("status") != "OK":
-                return None, None, debug
-
-            result = resp.get("result", {}) if isinstance(resp, dict) else {}
-            point = result.get("point", {}) if isinstance(result, dict) else {}
-
-            lon = point.get("x")
-            lat = point.get("y")
-            debug["point_x"] = lon
-            debug["point_y"] = lat
-
-            if lon is None or lat is None:
-                debug["error_code"] = debug["error_code"] or "NO_POINT"
-                debug["error_text"] = debug["error_text"] or "응답은 왔지만 좌표(point)가 없습니다."
-                return None, None, debug
-
-            return float(lat), float(lon), debug
-
-        except requests.HTTPError as e:
-            attempt_log["exception"] = str(e)
-            debug["exception"] = str(e)
-            debug["attempts"].append(attempt_log)
-
-            if debug["http_status"] in [500, 502, 503, 504] and attempt < VWORLD_RETRY_COUNT:
-                time.sleep(VWORLD_RETRY_WAIT_SEC)
-                continue
-            return None, None, debug
-
-        except requests.RequestException as e:
-            attempt_log["exception"] = str(e)
-            debug["exception"] = str(e)
-            debug["attempts"].append(attempt_log)
-
-            # ✅ 연결 끊김도 재시도
-            if attempt < VWORLD_RETRY_COUNT:
-                time.sleep(VWORLD_RETRY_WAIT_SEC)
-                continue
-            return None, None, debug
-
-        except Exception as e:
-            attempt_log["exception"] = str(e)
-            debug["exception"] = str(e)
-            debug["attempts"].append(attempt_log)
-            return None, None, debug
-
-    return None, None, debug
+    except Exception:
+        return None, None
 
 
-def _render_geo_debug():
-    debug = st.session_state.get("geo_debug") or {}
-    if not debug:
-        return
-
-    with st.expander("좌표 변환 디버그 보기", expanded=False):
-        juso_debug = debug.get("juso_coord", {})
-        road_debug = debug.get("road", {})
-        parcel_debug = debug.get("parcel", {})
-
-        st.markdown("**JUSO 좌표제공 API 시도**")
-        if juso_debug:
-            st.json(juso_debug)
-        else:
-            st.caption("JUSO 좌표 시도 정보 없음")
-
-        st.markdown("**VWorld 도로명 주소 변환 시도**")
-        if road_debug:
-            st.json(road_debug)
-        else:
-            st.caption("VWorld 도로명 시도 정보 없음")
-
-        st.markdown("**VWorld 지번 주소 변환 시도**")
-        if parcel_debug:
-            st.json(parcel_debug)
-        else:
-            st.caption("VWorld 지번 시도 정보 없음")
-
-
-def _make_geo_request_key(juso_item: dict) -> str:
+# =========================================================
+# 핀 지정 지도
+# =========================================================
+def _render_pin_picker_map():
     """
-    같은 주소에 대해 rerun 때마다 좌표 API를 반복 호출하지 않기 위한 키
+    모바일 부담을 줄이기 위해:
+    - 핀 지정 모드일 때만 렌더링
+    - 격자/경계/레이어 없이 가벼운 기본 지도만 사용
+    - 클릭 좌표 1개만 저장
     """
-    j = juso_item or {}
-    parts = [
-        str(j.get("roadAddr") or "").strip(),
-        str(j.get("jibunAddr") or "").strip(),
-        str(j.get("zipNo") or "").strip(),
-        str(j.get("admCd") or "").strip(),
-        str(j.get("rnMgtSn") or "").strip(),
-        str(j.get("udrtYn") or "").strip(),
-        str(j.get("buldMnnm") or "").strip(),
-        str(j.get("buldSlno") or "").strip(),
-    ]
-    return "|".join(parts)
+    pin_lat = st.session_state.get("pin_lat")
+    pin_lon = st.session_state.get("pin_lon")
+    auto_lat = st.session_state.get("auto_lat")
+    auto_lon = st.session_state.get("auto_lon")
 
-
-def _run_geocode_once(picked_j: dict):
-    """
-    실제 좌표 변환 수행 (한 번만)
-    """
-    lat, lon, juso_debug = juso_coord_search(picked_j)
-    road_debug = {}
-    parcel_debug = {}
-    coord_source = ""
-
-    if lat is not None and lon is not None:
-        coord_source = "JUSO 좌표제공 API"
+    # 초기 중심점:
+    # 1) 이미 찍은 핀
+    # 2) 주소검색 좌표가 있으면 그 위치
+    # 3) 없으면 전남권 대략 중앙값
+    if pin_lat is not None and pin_lon is not None:
+        center_lat, center_lon = float(pin_lat), float(pin_lon)
+        zoom = 18
+    elif auto_lat is not None and auto_lon is not None:
+        center_lat, center_lon = float(auto_lat), float(auto_lon)
+        zoom = 17
     else:
-        addr_for_geo = st.session_state.get("selected_address", "")
-        lat, lon, road_debug = vworld_geocode(addr_for_geo, "road")
-        if lat is not None and lon is not None:
-            coord_source = "VWorld 도로명"
-        else:
-            jibun_for_geo = st.session_state.get("selected_jibun", "")
-            if jibun_for_geo:
-                lat, lon, parcel_debug = vworld_geocode(jibun_for_geo, "parcel")
-                if lat is not None and lon is not None:
-                    coord_source = "VWorld 지번"
-            else:
-                parcel_debug = {
-                    "error_code": "NO_JIBUN",
-                    "error_text": "지번 주소가 없어 parcel 재시도를 하지 않았습니다."
-                }
+        center_lat, center_lon = 34.85, 126.85
+        zoom = 11
 
-    st.session_state["geo_debug"] = {
-        "juso_coord": juso_debug,
-        "road": road_debug,
-        "parcel": parcel_debug,
-    }
-    st.session_state["coord_source"] = coord_source
-    st.session_state["auto_lat"] = lat
-    st.session_state["auto_lon"] = lon
+    m = folium.Map(
+        location=[center_lat, center_lon],
+        zoom_start=zoom,
+        control_scale=True,
+        prefer_canvas=True,
+        tiles="OpenStreetMap",
+    )
 
-    if lat is not None and lon is not None:
-        try:
-            gid = latlon_to_grid_id_100m(float(lat), float(lon))
-            st.session_state["auto_grid_id"] = gid
-        except Exception as e:
-            st.session_state["auto_grid_id"] = ""
-            st.warning(f"좌표는 얻었지만 grid_id 계산 실패: {e}")
-    else:
-        st.session_state["auto_grid_id"] = ""
+    if pin_lat is not None and pin_lon is not None:
+        folium.Marker(
+            [float(pin_lat), float(pin_lon)],
+            tooltip="선택한 위치",
+            popup="선택한 위치",
+        ).add_to(m)
+
+    map_data = st_folium(
+        m,
+        key="field_public_pin_map",
+        height=420,
+        width=None,
+        returned_objects=["last_clicked"],
+    )
+
+    clicked = (map_data or {}).get("last_clicked")
+    if clicked and clicked.get("lat") is not None and clicked.get("lng") is not None:
+        new_lat = round(float(clicked["lat"]), 8)
+        new_lon = round(float(clicked["lng"]), 8)
+
+        old_lat = st.session_state.get("pin_lat")
+        old_lon = st.session_state.get("pin_lon")
+
+        # 같은 클릭으로 무한 rerun 방지
+        changed = (
+            old_lat is None or old_lon is None
+            or abs(float(old_lat) - new_lat) > 1e-10
+            or abs(float(old_lon) - new_lon) > 1e-10
+        )
+
+        if changed:
+            st.session_state["pin_lat"] = new_lat
+            st.session_state["pin_lon"] = new_lon
+            try:
+                st.session_state["pin_grid_id"] = latlon_to_grid_id_100m(new_lat, new_lon)
+            except Exception:
+                st.session_state["pin_grid_id"] = ""
+            st.rerun()
 
 
 # =========================================================
@@ -461,102 +211,198 @@ def _run_geocode_once(picked_j: dict):
 def field_public_page(supabase):
     st.title("📝 소상공인 방범물품 지원 설문 (현장 접수)")
 
+    # 연속 제출 방지
     st.session_state.setdefault("last_submit_ts", 0)
+
+    # 세션 초기화
     st.session_state.setdefault("addr_candidates", [])
     st.session_state.setdefault("selected_address", "")
     st.session_state.setdefault("selected_jibun", "")
     st.session_state.setdefault("selected_zipno", "")
+
+    # 주소 기반 자동 좌표
     st.session_state.setdefault("auto_lat", None)
     st.session_state.setdefault("auto_lon", None)
+
+    # 계산된 grid_id
     st.session_state.setdefault("auto_grid_id", "")
-    st.session_state.setdefault("geo_debug", {})
-    st.session_state.setdefault("coord_source", "")
-    st.session_state.setdefault("last_geo_request_key", "")
+
+    # 핀 기반 좌표
+    st.session_state.setdefault("pin_lat", None)
+    st.session_state.setdefault("pin_lon", None)
+    st.session_state.setdefault("pin_grid_id", "")
+
+    # 핀 지도 열기 여부
+    st.session_state.setdefault("show_pin_map", False)
 
     # ==================================================
-    # 0) 주소 검색/선택
+    # 0) 위치 입력 방식
     # ==================================================
-    st.subheader("📍 주소 검색 (필수)")
-    addr_query = st.text_input("도로명주소 검색", placeholder="예) 전남 무안군 삼향읍 남악3로 71")
+    st.subheader("📍 위치 입력 방식")
+    location_input_mode = st.radio(
+        "위치 입력 방식",
+        ["주소검색", "핀 지정"],
+        horizontal=True,
+        key="location_input_mode",
+        label_visibility="collapsed",
+    )
 
-    col_s1, _ = st.columns([1, 3])
-    with col_s1:
-        do_search = st.button("🔎 검색")
+    # ==================================================
+    # 0-1) 주소검색 방식
+    # ==================================================
+    if location_input_mode == "주소검색":
+        st.subheader("📍 주소 검색 (필수)")
+        addr_query = st.text_input(
+            "도로명주소 검색",
+            placeholder="예) 전남 무안군 삼향읍 남악3로 71",
+            key="addr_query",
+        )
 
-    if do_search:
-        if not addr_query.strip():
-            st.warning("검색어를 입력하세요.")
-        else:
-            try:
-                candidates = juso_search(addr_query.strip(), page=1, size=10)
-                st.session_state["addr_candidates"] = candidates
+        col_s1, _ = st.columns([1, 3])
+        with col_s1:
+            do_search = st.button("🔎 검색")
 
-                # ✅ 새 검색 시 이전 좌표 상태 초기화
-                st.session_state["selected_address"] = ""
-                st.session_state["selected_jibun"] = ""
-                st.session_state["selected_zipno"] = ""
-                st.session_state["auto_lat"] = None
-                st.session_state["auto_lon"] = None
+        if do_search:
+            if not addr_query.strip():
+                st.warning("검색어를 입력하세요.")
+            else:
+                try:
+                    candidates = juso_search(addr_query.strip(), page=1, size=10)
+                    st.session_state["addr_candidates"] = candidates
+                except Exception as e:
+                    st.error(f"주소 검색 실패: {e}")
+                    st.session_state["addr_candidates"] = []
+
+        candidates = st.session_state.get("addr_candidates", []) or []
+        if candidates:
+            options = []
+            for j in candidates:
+                road = j.get("roadAddr", "")
+                jibun = j.get("jibunAddr", "")
+                zipno = j.get("zipNo", "")
+                options.append(f"{road}  |  지번: {jibun}  |  우편: {zipno}")
+
+            picked = st.selectbox("검색 결과 선택", options, key="addr_pick")
+            idx = options.index(picked)
+            picked_j = candidates[idx]
+
+            st.session_state["selected_address"] = (picked_j.get("roadAddr") or "").strip()
+            st.session_state["selected_jibun"] = (picked_j.get("jibunAddr") or "").strip()
+            st.session_state["selected_zipno"] = (picked_j.get("zipNo") or "").strip()
+
+            # ✅ 좌표 자동 계산 (road → 실패 시 parcel)
+            addr_for_geo = st.session_state["selected_address"]
+            lat, lon = vworld_geocode(addr_for_geo, "road")
+            if lat is None or lon is None:
+                jibun_for_geo = st.session_state.get("selected_jibun", "")
+                lat, lon = vworld_geocode(jibun_for_geo, "parcel") if jibun_for_geo else (None, None)
+
+            st.session_state["auto_lat"] = lat
+            st.session_state["auto_lon"] = lon
+
+            # grid_id 계산
+            if lat is not None and lon is not None:
+                try:
+                    gid = latlon_to_grid_id_100m(float(lat), float(lon))
+                    st.session_state["auto_grid_id"] = gid
+                except Exception:
+                    st.session_state["auto_grid_id"] = ""
+            else:
                 st.session_state["auto_grid_id"] = ""
-                st.session_state["geo_debug"] = {}
-                st.session_state["coord_source"] = ""
-                st.session_state["last_geo_request_key"] = ""
 
-            except Exception as e:
-                st.error(f"주소 검색 실패: {e}")
-                st.session_state["addr_candidates"] = []
+            # 주소검색 모드에서 새 주소를 고르면 핀값은 건드리지 않음
+            # (모드 전환 시 참고용으로 남겨둘 수 있게 함)
 
-    candidates = st.session_state.get("addr_candidates", []) or []
-    if candidates:
-        options = []
-        for j in candidates:
-            road = j.get("roadAddr", "")
-            jibun = j.get("jibunAddr", "")
-            zipno = j.get("zipNo", "")
-            options.append(f"{road}  |  지번: {jibun}  |  우편: {zipno}")
+        selected_addr = st.session_state.get("selected_address", "").strip()
 
-        picked = st.selectbox("검색 결과 선택", options, key="addr_pick")
-        idx = options.index(picked)
-        picked_j = candidates[idx]
+    # ==================================================
+    # 0-2) 핀 지정 방식
+    # ==================================================
+    else:
+        st.subheader("📍 핀 지정")
+        st.caption("모바일 속도를 위해 지도를 상시 띄우지 않고, 필요할 때만 열도록 했습니다.")
 
-        st.session_state["selected_address"] = (picked_j.get("roadAddr") or "").strip()
-        st.session_state["selected_jibun"] = (picked_j.get("jibunAddr") or "").strip()
-        st.session_state["selected_zipno"] = (picked_j.get("zipNo") or "").strip()
+        pin_location_note = st.text_input(
+            "위치 설명(선택)",
+            placeholder="예) 남악 ○○상가 1층 코너 점포 / 건물명 / 도로명주소",
+            key="pin_location_note",
+        )
 
-        # ✅ 핵심 수정: 같은 주소에 대해 rerun마다 좌표 API를 다시 호출하지 않음
-        current_geo_request_key = _make_geo_request_key(picked_j)
-        last_geo_request_key = st.session_state.get("last_geo_request_key", "")
+        st.checkbox(
+            "핀 지정 지도 열기",
+            key="show_pin_map",
+            help="체크했을 때만 지도를 표시합니다.",
+        )
 
-        if current_geo_request_key != last_geo_request_key:
-            _run_geocode_once(picked_j)
-            st.session_state["last_geo_request_key"] = current_geo_request_key
+        if st.session_state.get("show_pin_map"):
+            st.caption("지도를 클릭하면 해당 위치로 핀이 지정됩니다.")
+            _render_pin_picker_map()
 
-    selected_addr = st.session_state.get("selected_address", "").strip()
-    auto_lat = st.session_state.get("auto_lat")
-    auto_lon = st.session_state.get("auto_lon")
-    auto_grid_id = st.session_state.get("auto_grid_id", "")
-    coord_source = st.session_state.get("coord_source", "")
+            pin_lat = st.session_state.get("pin_lat")
+            pin_lon = st.session_state.get("pin_lon")
+            pin_grid_id = (st.session_state.get("pin_grid_id") or "").strip()
 
-    if selected_addr:
-        if auto_lat is not None and auto_lon is not None:
-            st.success(
-                f"좌표 변환 성공 ({coord_source}) : lat={auto_lat}, lon={auto_lon}, grid_id={auto_grid_id}"
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                st.text_input(
+                    "선택 위도",
+                    value=_fmt_coord(pin_lat),
+                    disabled=True,
+                    key="pin_lat_preview",
+                )
+            with col_p2:
+                st.text_input(
+                    "선택 경도",
+                    value=_fmt_coord(pin_lon),
+                    disabled=True,
+                    key="pin_lon_preview",
+                )
+
+            st.text_input(
+                "계산된 국가지점번호(100m)",
+                value=pin_grid_id,
+                disabled=True,
+                key="pin_grid_preview",
             )
-        else:
-            st.error("주소 선택은 되었지만 좌표 변환이 실패했습니다. 아래 디버그를 확인해 주세요.")
-            _render_geo_debug()
+
+            col_reset, _ = st.columns([1, 3])
+            with col_reset:
+                if st.button("핀 초기화"):
+                    st.session_state["pin_lat"] = None
+                    st.session_state["pin_lon"] = None
+                    st.session_state["pin_grid_id"] = ""
+                    st.rerun()
+
+        selected_addr = (st.session_state.get("pin_location_note") or "").strip()
 
     st.divider()
 
     # ==================================================
-    # 1) 설문 입력
+    # 1) 설문 입력 (st.form 제거: 즉시 반응)
     # ==================================================
     st.subheader("① 현장 관서 정보 (필수)")
     officer_station = st.selectbox("관서 *", JEONNAM_POLICE_STATIONS)
 
     st.subheader("② 점포 기본 정보")
     shop_name = st.text_input("점포명 (선택)")
-    st.text_input("점포 주소 *", value=selected_addr, disabled=True)
+
+    if location_input_mode == "주소검색":
+        st.text_input("점포 주소 *", value=selected_addr, disabled=True)
+    else:
+        pin_lat = st.session_state.get("pin_lat")
+        pin_lon = st.session_state.get("pin_lon")
+        pin_grid_id = (st.session_state.get("pin_grid_id") or "").strip()
+
+        pin_addr_display = selected_addr if selected_addr else "핀 지정 위치"
+        st.text_input("점포 위치 *", value=pin_addr_display, disabled=True)
+
+        c_pos1, c_pos2 = st.columns(2)
+        with c_pos1:
+            st.text_input("위도", value=_fmt_coord(pin_lat), disabled=True, key="pin_lat_readonly")
+        with c_pos2:
+            st.text_input("경도", value=_fmt_coord(pin_lon), disabled=True, key="pin_lon_readonly")
+
+        st.text_input("국가지점번호(100m)", value=pin_grid_id, disabled=True, key="pin_gid_readonly")
 
     colA, colB = st.columns(2)
     with colA:
@@ -564,6 +410,7 @@ def field_public_page(supabase):
     with colB:
         owner_phone = st.text_input("점주 전화번호 (선택)", placeholder="010-1234-5678")
 
+    # ✅ 동글뱅이(라디오) 선택
     owner_gender = st.radio("성별", ["남", "여"], horizontal=True)
 
     st.caption("연령대(선택)")
@@ -578,16 +425,18 @@ def field_public_page(supabase):
 
     st.subheader("③ 운영/시설/보안 현황")
 
+    # ✅ 영업시간(간략 라디오)
     st.caption("영업시간(간략 선택)")
     biz_hours = st.radio(
         "영업시간",
         ["24시간", "주간(09~18)", "야간(18~24)", "심야(22~02)", "직접입력"],
         horizontal=True,
-        index=1,
+        index=1,  # 기본값: 주간
         key="biz_hours",
         label_visibility="collapsed",
     )
 
+    # 직접입력 선택 시만 시간 입력
     open_t, close_t = None, None
     if biz_hours == "직접입력":
         c1, c2 = st.columns(2)
@@ -609,6 +458,7 @@ def field_public_page(supabase):
     )
     employment_type = None if employment_type_choice == "선택안함" else employment_type_choice
 
+    # ✅ 추가 설문(최소세트 6개) - 전부 라디오(동글뱅이)
     st.subheader("③-1 추가 점검 항목(간단 선택)")
 
     st.caption("업종")
@@ -662,6 +512,17 @@ def field_public_page(supabase):
         label_visibility="collapsed",
     )
 
+    st.caption("CCTV 작동 확인")
+    cctv_check = st.radio(
+        "CCTV 작동",
+        ["미확인", "정상", "불량"],
+        horizontal=True,
+        index=0,
+        key="cctv_check",
+        label_visibility="collapsed",
+    )
+
+    # ✅ 사설경비(보안업체) 이용 여부: 라디오
     st.caption("사설경비(보안업체) 이용 여부(선택)")
     security_status = st.radio(
         "보안업체",
@@ -675,8 +536,9 @@ def field_public_page(supabase):
     if security_status == "이용 중":
         security_company_name = st.text_input("경비업체명(선택)", key="security_company_name")
 
-    has_cctv = st.checkbox("매장 내 CCTV 보유 여부")
-    has_emergency_bell = st.checkbox("비상벨 보유 여부")
+    # 기존 점수 반영 체크는 유지
+    has_emergency_bell = st.checkbox("비상벨 보유 여부 (체감안전도 점수에서 -10 반영)")
+    has_cctv = st.checkbox("CCTV 보유 여부 (체감안전도 점수에서 -10 반영)")
 
     other_security = st.text_area("기타 보안시설 (선택)", placeholder="예) 방범창, 자동문, 출입통제 등")
 
@@ -693,6 +555,23 @@ def field_public_page(supabase):
 
     overall_comment = st.text_area("추가 의견 (선택)")
 
+    # ==================================================
+    # ✅ 즉시 반응 미리보기
+    # ==================================================
+    resident_adj_preview = max(
+        0,
+        perceived_safety
+        - (10 if has_emergency_bell else 0)
+        - (10 if has_cctv else 0)
+    )
+    reflected_risk_preview = 100 - resident_adj_preview  # 우선순위 반영값(불안도)
+    st.info(
+        f"✅ 미리보기(즉시 반응)\n\n"
+        f"- 저장될 체감안전도 점수(perceived_safety): {perceived_safety}\n"
+        f"- 감점 반영 후 주관점수(resident_adj): {resident_adj_preview}\n"
+        f"- 우선순위 반영값(불안도 = 100 - resident_adj): {reflected_risk_preview}"
+    )
+
     st.divider()
 
     # ==================================================
@@ -704,58 +583,93 @@ def field_public_page(supabase):
             st.warning("잠시 후 다시 시도해 주세요. (연속 제출 방지)")
             st.stop()
 
-        if not selected_addr:
-            st.error("주소 검색 후 결과에서 주소를 선택해야 합니다.")
-            st.stop()
-
-        lat = st.session_state.get("auto_lat")
-        lon = st.session_state.get("auto_lon")
-        if lat is None or lon is None:
-            st.error("외부 좌표 변환 서비스 응답 실패로 저장할 수 없습니다. 잠시 후 다시 시도해 주세요.")
-            _render_geo_debug()
-            st.stop()
-
-        grid_id = (st.session_state.get("auto_grid_id") or "").strip()
-        if not grid_id:
-            try:
-                grid_id = latlon_to_grid_id_100m(float(lat), float(lon))
-            except Exception as e:
-                st.error(f"grid_id(국가지점번호 100m) 계산 실패: {e}")
+        # 위치 입력 방식별 저장값 결정
+        if location_input_mode == "주소검색":
+            if not selected_addr:
+                st.error("주소 검색 후 결과에서 주소를 선택해야 합니다.")
                 st.stop()
+
+            lat = st.session_state.get("auto_lat")
+            lon = st.session_state.get("auto_lon")
+            if lat is None or lon is None:
+                st.error("주소 기반 좌표 산출 실패로 저장할 수 없습니다. (주소를 더 정확히 검색/선택해 주세요)")
+                st.stop()
+
+            grid_id = (st.session_state.get("auto_grid_id") or "").strip()
+            if not grid_id:
+                try:
+                    grid_id = latlon_to_grid_id_100m(float(lat), float(lon))
+                except Exception as e:
+                    st.error(f"grid_id(국가지점번호 100m) 계산 실패: {e}")
+                    st.stop()
+
+            address_to_save = selected_addr
+
+        else:
+            lat = st.session_state.get("pin_lat")
+            lon = st.session_state.get("pin_lon")
+
+            if lat is None or lon is None:
+                st.error("핀 지정 모드에서는 지도에서 위치를 찍어야 합니다.")
+                st.stop()
+
+            grid_id = (st.session_state.get("pin_grid_id") or "").strip()
+            if not grid_id:
+                try:
+                    grid_id = latlon_to_grid_id_100m(float(lat), float(lon))
+                except Exception as e:
+                    st.error(f"grid_id(국가지점번호 100m) 계산 실패: {e}")
+                    st.stop()
+
+            pin_location_note = (st.session_state.get("pin_location_note") or "").strip()
+            if pin_location_note:
+                address_to_save = pin_location_note
+            else:
+                address_to_save = f"핀 지정 위치 ({float(lat):.6f}, {float(lon):.6f})"
 
         phone = _clean_phone(owner_phone)
         if phone and not PHONE_RE.match(phone):
             st.warning("전화번호 형식이 이상합니다. 예: 010-1234-5678 (그래도 저장은 진행)")
 
+        # ✅ DB 컬럼 깨질 위험 때문에 새 컬럼은 추가하지 않음
+        # - uses_security_company: boolean 유지 (이용 중이면 True)
         uses_security_company = (security_status == "이용 중")
 
+        # ✅ 추가 설문 결과를 overall_comment에 구조화 텍스트로 합침(DB 변경 없이 저장)
         extra_block_lines = [
             "[추가설문]",
+            f"위치입력방식={location_input_mode}",
             f"업종={biz_type}",
             f"야간단독={night_alone}",
             f"주변환경={surroundings}",
             f"사각지대={blind_spot}",
             f"조명={lighting}",
-            f"사설경비={security_status}",
-            f"매장내CCTV={'있음' if has_cctv else '없음'}",
-            f"비상벨보유={'있음' if has_emergency_bell else '없음'}",
+            f"CCTV작동확인={cctv_check}",
             f"영업시간선택={biz_hours}",
         ]
+
+        if location_input_mode == "핀 지정":
+            extra_block_lines.append(f"핀위치={float(lat):.6f},{float(lon):.6f}")
+            extra_block_lines.append(f"핑리드={grid_id}")
 
         if biz_hours == "직접입력" and open_t and close_t:
             extra_block_lines.append(f"영업시간직접입력={open_t.strftime('%H:%M')}~{close_t.strftime('%H:%M')}")
 
+        if security_status:
+            extra_block_lines.append(f"사설경비={security_status}")
         if security_company_name and security_company_name.strip():
             extra_block_lines.append(f"경비업체명={security_company_name.strip()}")
 
         extra_block = "\n".join(extra_block_lines)
 
+        # overall_comment에 붙이기
         overall_comment_final = (overall_comment or "").strip()
         if overall_comment_final:
             overall_comment_final = f"{overall_comment_final}\n\n{extra_block}"
         else:
             overall_comment_final = extra_block
 
+        # 경비업체명은 기존 other_security에도 합쳐 저장(혹시 현장에서 찾기 쉽게)
         other_security_final = (other_security or "").strip()
         if security_company_name and security_company_name.strip():
             line = f"경비업체명: {security_company_name.strip()}"
@@ -766,13 +680,15 @@ def field_public_page(supabase):
 
         payload = {
             "shop_name": shop_name.strip() if shop_name else None,
-            "address": selected_addr,
+            "address": address_to_save,
             "station": officer_station,
 
+            # ✅ 저장 좌표
             "lat": float(lat),
             "lon": float(lon),
             "lng": float(lon),
 
+            # ✅ 저장 grid_id
             "grid_id": grid_id,
 
             "annual_sales": int(annual_sales) if annual_sales else 0,
@@ -783,6 +699,7 @@ def field_public_page(supabase):
             "has_cctv": bool(has_cctv),
             "other_security": other_security_final if other_security_final else None,
 
+            # ✅ 설문 점수
             "perceived_safety": int(perceived_safety),
 
             "overall_comment": overall_comment_final if overall_comment_final else None,
