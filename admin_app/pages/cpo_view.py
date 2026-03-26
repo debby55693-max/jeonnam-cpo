@@ -89,6 +89,54 @@ def safe_bool(v, default=False):
         return default
 
 
+def normalize_station_name(v: str) -> str:
+    s = safe_str(v, "").strip()
+    if not s:
+        return ""
+    if s in ["전체", "전남청"]:
+        return s
+
+    s = s.replace("전라남도", "").replace("전남", "").strip()
+    s = s.replace("경찰청", "").strip()
+
+    if s.endswith("경찰서"):
+        return s
+
+    if s.endswith("경찰"):
+        s = s[:-2].strip()
+    elif s.endswith("서"):
+        s = s[:-1].strip()
+
+    return f"{s}경찰서"
+
+
+def station_variants(v: str) -> list[str]:
+    raw = safe_str(v, "").strip()
+    norm = normalize_station_name(raw)
+
+    vals = []
+    for x in [
+        raw,
+        norm,
+        raw.replace("전라남도", "").replace("전남", "").strip(),
+        norm.replace("경찰서", "").strip() if norm.endswith("경찰서") else norm,
+    ]:
+        x = safe_str(x, "").strip()
+        if x and x not in vals:
+            vals.append(x)
+
+    extra = []
+    for x in vals:
+        if x not in ["전체", "전남청"] and not x.endswith("경찰서"):
+            extra.append(f"{x}경찰서")
+
+    for x in extra:
+        if x not in vals:
+            vals.append(x)
+
+    return vals
+
+
 def clean_phone(phone: str) -> str:
     if not phone:
         return ""
@@ -159,7 +207,7 @@ def _fetch_grid_store_list(supabase, grid_id: str) -> tuple[pd.DataFrame, str]:
     try:
         data = (
             supabase.table("shops")
-            .select("id, station, grid_id, shop_name, address, phone, tel, owner_phone, lat, lon, updated_at")
+            .select("id, station, officer_station, grid_id, shop_name, address, phone, tel, owner_phone, lat, lon, updated_at")
             .eq("grid_id", gid)
             .limit(20000)
             .execute()
@@ -359,6 +407,10 @@ def _get_store_count_download_basis(supabase, gid: str, ttl_sec: int = 300) -> i
 def cpo_page(supabase, station: str, role: str):
     st.title("🗂️ CPO 관리 (우선순위 / 설문 수정 / 점수 정보 / 진단)")
 
+    raw_station = safe_str(station, "").strip()
+    norm_station = normalize_station_name(raw_station)
+    station_keys = station_variants(raw_station)
+
     try:
         qp = dict(st.query_params)
     except Exception:
@@ -380,10 +432,32 @@ def cpo_page(supabase, station: str, role: str):
 
     # shops 로드
     try:
-        q = supabase.table("shops").select("*").order("updated_at", desc=True)
-        if role == "cpo" and station:
-            q = q.eq("station", station)
-        shops = q.execute().data or []
+        if role == "cpo" and station_keys:
+            shops = (
+                supabase.table("shops")
+                .select("*")
+                .in_("station", station_keys)
+                .order("updated_at", desc=True)
+                .execute()
+                .data
+                or []
+            )
+
+            if not shops:
+                shops = (
+                    supabase.table("shops")
+                    .select("*")
+                    .in_("officer_station", station_keys)
+                    .order("updated_at", desc=True)
+                    .execute()
+                    .data
+                    or []
+                )
+        else:
+            q = supabase.table("shops").select("*").order("updated_at", desc=True)
+            if norm_station and norm_station not in ["전체", "전남청"]:
+                q = q.eq("station", norm_station)
+            shops = q.execute().data or []
     except Exception as e:
         st.error(f"점포 로드 실패: {e}")
         shops = []
@@ -393,8 +467,12 @@ def cpo_page(supabase, station: str, role: str):
     # ranked 뷰 로드
     try:
         qv = supabase.table("v_shops_priority_ranked").select("*")
-        if station:
-            qv = qv.eq("station", station)
+
+        if role == "cpo" and station_keys:
+            qv = qv.in_("station", station_keys)
+        elif norm_station and norm_station not in ["전체", "전남청"]:
+            qv = qv.eq("station", norm_station)
+
         ranked = qv.execute().data or []
     except Exception:
         ranked = []
@@ -418,7 +496,7 @@ def cpo_page(supabase, station: str, role: str):
     st.subheader("🗺️ 지도")
     if shops_df.empty:
         st.info("등록된 점포(설문)가 없어도 지도/시군경계/핫스팟 격자는 표시됩니다.")
-    call_map_page(station=station, shops_df=map_df)
+    call_map_page(station=norm_station or station, shops_df=map_df)
 
     st.divider()
 
@@ -427,7 +505,7 @@ def cpo_page(supabase, station: str, role: str):
     # =========================================================
     st.subheader("🟧 집중관리 우선점포")
 
-    station_key = _extract_station_key(station)
+    station_key = _extract_station_key(norm_station or station)
     sel_grid = st.session_state.get("selected_grid_id")
 
     hot_path = _find_output_file("hotspot_grids.geojson")
@@ -452,7 +530,7 @@ def cpo_page(supabase, station: str, role: str):
         raw_df, sel_src = _fetch_grid_store_list(supabase, str(sel_grid))
         dl_cnt = len(raw_df) if raw_df is not None else 0
 
-        sel_out_df = _normalize_store_df(raw_df, str(sel_grid), station, sel_src)
+        sel_out_df = _normalize_store_df(raw_df, str(sel_grid), norm_station or station, sel_src)
         sel_xlsx = df_to_xlsx_bytes_safe(sel_out_df)
         sel_csv = sel_out_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
 
@@ -551,7 +629,7 @@ def cpo_page(supabase, station: str, role: str):
                 frames = []
                 for gid in checked_gids:
                     raw_df, src = _fetch_grid_store_list(supabase, gid)
-                    frames.append(_normalize_store_df(raw_df, gid, station, src))
+                    frames.append(_normalize_store_df(raw_df, gid, norm_station or station, src))
                 combined_df = pd.concat(frames, ignore_index=True)
                 combined_xlsx = df_to_xlsx_bytes_safe(combined_df)
                 combined_csv = combined_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
