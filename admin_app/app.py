@@ -1,8 +1,16 @@
 import streamlit as st
 
 from core.auth import login_ui
-from core.supabase_client import get_authed_client
+from core.supabase_client import get_supabase
 from pages.cpo_view import cpo_page
+
+
+st.set_page_config(
+    page_title="소상공인 시스템",
+    page_icon="🛡️",
+    layout="wide",
+)
+
 
 JEONNAM_POLICE_STATIONS = [
     "목포경찰서", "여수경찰서", "순천경찰서", "나주경찰서", "광양경찰서",
@@ -12,41 +20,34 @@ JEONNAM_POLICE_STATIONS = [
     "구례경찰서", "신안경찰서",
 ]
 
-try:
-    st.set_page_config(page_title="소상공인 시스템", layout="wide")
-except Exception:
-    pass
-
 
 def main():
-    session = login_ui()
-    if not session:
-        st.stop()
+    auth_info = login_ui()
+    if not auth_info:
+        st.title("소상공인 시스템")
+        st.info("왼쪽 사이드바에서 로그인해주세요.")
+        return
 
-    access_token = session["access_token"]
-    user = session["user"]
-    refresh_token = st.session_state.get("refresh_token")
-    supabase = get_authed_client(access_token, refresh_token)
+    role = st.session_state.get("role", "")
+    station = st.session_state.get("station", "")
 
-    role = user.get("role") or "cpo"
-    my_station = user.get("station") or ""
+    if role not in ["admin", "cpo"]:
+        st.error("권한 정보가 올바르지 않습니다. profiles.role 값을 확인하세요.")
+        return
 
-    station_filter = my_station
-    if role == "admin":
-        with st.sidebar:
-            st.markdown("---")
-            station_options = ["전체"] + JEONNAM_POLICE_STATIONS
-            station_filter = st.selectbox(
-                "관할 경찰서",
-                station_options,
-                index=0,
-                key="admin_station_filter",
-            )
+    if role == "cpo" and station not in JEONNAM_POLICE_STATIONS:
+        st.error("CPO 계정의 관할 경찰서 정보가 올바르지 않습니다.")
+        return
 
+    supabase = get_supabase()
+
+    # admin도 동일한 관리화면을 사용하되,
+    # admin은 전체/관서별 조회가 가능하고
+    # cpo는 본인 관서만 보게 한다.
     cpo_page(
         supabase=supabase,
         role=role,
-        station=station_filter,
+        station=station,
         station_options=JEONNAM_POLICE_STATIONS,
     )
 
