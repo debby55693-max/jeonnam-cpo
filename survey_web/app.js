@@ -13,8 +13,15 @@ document.addEventListener("DOMContentLoaded", function () {
   const agreePrivacyInput = document.getElementById("agreePrivacy");
   const agreeNoticeInput = document.getElementById("agreeNotice");
 
+  const submitSectionDesc = submitBtn
+    ?.closest(".section-card")
+    ?.querySelector(".section-desc");
+
   let selectedLon = null;
   let selectedLat = null;
+  let stationRows = [];
+  let currentMap = null;
+  let currentMarkerLayer = null;
 
   function setResultMessage(message) {
     if (resultBox) {
@@ -26,6 +33,14 @@ document.addEventListener("DOMContentLoaded", function () {
     if (locationInfo) {
       locationInfo.innerHTML = message;
     }
+  }
+
+  function setSubmitPending(isPending) {
+    if (!submitBtn) return;
+    submitBtn.disabled = isPending;
+    submitBtn.textContent = isPending ? "제출 중..." : "신청서 제출";
+    submitBtn.style.opacity = isPending ? "0.7" : "1";
+    submitBtn.style.cursor = isPending ? "not-allowed" : "pointer";
   }
 
   function loadScript(src, id) {
@@ -123,6 +138,13 @@ document.addEventListener("DOMContentLoaded", function () {
     return Number(digits).toLocaleString("ko-KR");
   }
 
+  function parseNumberOrNull(value) {
+    const digits = onlyDigits(value);
+    if (!digits) return null;
+    const parsed = Number(digits);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
   function focusAndScroll(target) {
     if (!target) return;
 
@@ -145,6 +167,13 @@ document.addEventListener("DOMContentLoaded", function () {
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
   }
 
+  function formatIsoToKoreanText(isoText) {
+    if (!isoText) return "";
+    const d = new Date(isoText);
+    if (Number.isNaN(d.getTime())) return isoText;
+    return formatDateTime(d);
+  }
+
   function createInfoRow(label, value) {
     const safeLabel = escapeHtml(label);
     const safeValue = escapeHtml(value || "(미입력)");
@@ -156,6 +185,85 @@ document.addEventListener("DOMContentLoaded", function () {
     `;
   }
 
+  function normalizeText(value) {
+    return String(value || "").replace(/\s/g, "");
+  }
+
+  function getSafeFeelAnswers() {
+    return {
+      safeFeel1: getRadioValue("safeFeel1"),
+      safeFeel2: getRadioValue("safeFeel2"),
+      safeFeel3: getRadioValue("safeFeel3"),
+      safeFeel4: getRadioValue("safeFeel4"),
+      safeFeel5: getRadioValue("safeFeel5")
+    };
+  }
+
+  function buildApplyReason() {
+    const crimeFear = getRadioValue("crimeFear") || "(미응답)";
+    const nightBusiness = getRadioValue("nightBusiness") || "(미응답)";
+    const darkArea = getRadioValue("darkArea") || "(미응답)";
+    const soloWork = getRadioValue("soloWork") || "(미응답)";
+
+    return [
+      `범죄 불안 경험: ${crimeFear}`,
+      `야간 영업 여부: ${nightBusiness}`,
+      `주변 환경: ${darkArea}`,
+      `혼자 근무 시간: ${soloWork}`
+    ].join(" / ");
+  }
+
+  function buildEtcNote() {
+    const cctvStatus = getRadioValue("cctvStatus") || "(미응답)";
+    const securityCompany = getRadioValue("securityCompany") || "(미응답)";
+    const hasBell = getRadioValue("hasBell") || "(미응답)";
+    const safeFeels = getSafeFeelAnswers();
+
+    return [
+      "[체감안전도 설문]",
+      `1. 전반적 안전감: ${safeFeels.safeFeel1 || "(미응답)"}`,
+      `2. 야간 주변 안전감: ${safeFeels.safeFeel2 || "(미응답)"}`,
+      `3. 단독근무 불안감: ${safeFeels.safeFeel3 || "(미응답)"}`,
+      `4. 외부 침입 보호감: ${safeFeels.safeFeel4 || "(미응답)"}`,
+      `5. 범죄피해 가능성 인식: ${safeFeels.safeFeel5 || "(미응답)"}`,
+      "",
+      "[방범시설 응답 원문]",
+      `CCTV 설치 현황: ${cctvStatus}`,
+      `사설경비업체 이용 여부: ${securityCompany}`,
+      `비상벨 설치 여부: ${hasBell}`
+    ].join("\n");
+  }
+
+  function inferStationByAddress(addressText) {
+    const normalized = normalizeText(addressText);
+    if (!normalized || !Array.isArray(stationRows) || stationRows.length === 0) {
+      return null;
+    }
+
+    const candidates = [];
+
+    stationRows.forEach((row) => {
+      const areaName = String(row.area_name || "").trim();
+      if (!areaName) return;
+
+      let score = 0;
+
+      if (normalized.includes(`${areaName}시`)) score = 4;
+      else if (normalized.includes(`${areaName}군`)) score = 4;
+      else if (normalized.includes(`${areaName}구`)) score = 4;
+      else if (normalized.includes(areaName)) score = 3;
+      else if (normalized.includes(String(row.station_name || "").trim())) score = 2;
+      else if (normalized.includes(String(row.station_label || "").replace("경찰서", "").trim())) score = 1;
+
+      if (score > 0) {
+        candidates.push({ row, score });
+      }
+    });
+
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates.length > 0 ? candidates[0].row : null;
+  }
+
   function validateRequiredFields() {
     const ownerName = document.getElementById("ownerName")?.value.trim() || "";
     const phone = phoneInput?.value.trim() || "";
@@ -165,6 +273,18 @@ document.addEventListener("DOMContentLoaded", function () {
     const address = addressInput?.value.trim() || "";
     const selectedAddress = selectedAddressInput?.value.trim() || "";
     const salesRange = getRadioValue("salesRange");
+    const crimeFear = getRadioValue("crimeFear");
+    const nightBusiness = getRadioValue("nightBusiness");
+    const darkArea = getRadioValue("darkArea");
+    const soloWork = getRadioValue("soloWork");
+    const cctvStatus = getRadioValue("cctvStatus");
+    const securityCompany = getRadioValue("securityCompany");
+    const hasBell = getRadioValue("hasBell");
+    const safeFeel1 = getRadioValue("safeFeel1");
+    const safeFeel2 = getRadioValue("safeFeel2");
+    const safeFeel3 = getRadioValue("safeFeel3");
+    const safeFeel4 = getRadioValue("safeFeel4");
+    const safeFeel5 = getRadioValue("safeFeel5");
     const agreePrivacy = agreePrivacyInput?.checked || false;
     const agreeNotice = agreeNoticeInput?.checked || false;
 
@@ -207,6 +327,90 @@ document.addEventListener("DOMContentLoaded", function () {
       });
     }
 
+    if (!crimeFear) {
+      missing.push({
+        label: "범죄피해 또는 위협 경험",
+        target: document.querySelector('input[name="crimeFear"]')
+      });
+    }
+
+    if (!nightBusiness) {
+      missing.push({
+        label: "야간 영업 여부",
+        target: document.querySelector('input[name="nightBusiness"]')
+      });
+    }
+
+    if (!darkArea) {
+      missing.push({
+        label: "점포 주변 환경",
+        target: document.querySelector('input[name="darkArea"]')
+      });
+    }
+
+    if (!soloWork) {
+      missing.push({
+        label: "혼자 근무 시간",
+        target: document.querySelector('input[name="soloWork"]')
+      });
+    }
+
+    if (!cctvStatus) {
+      missing.push({
+        label: "점포 내 CCTV 설치 여부",
+        target: document.querySelector('input[name="cctvStatus"]')
+      });
+    }
+
+    if (!securityCompany) {
+      missing.push({
+        label: "사설경비업체 이용 여부",
+        target: document.querySelector('input[name="securityCompany"]')
+      });
+    }
+
+    if (!hasBell) {
+      missing.push({
+        label: "비상벨 설치 여부",
+        target: document.querySelector('input[name="hasBell"]')
+      });
+    }
+
+    if (!safeFeel1) {
+      missing.push({
+        label: "체감안전도 설문 1번",
+        target: document.querySelector('input[name="safeFeel1"]')
+      });
+    }
+
+    if (!safeFeel2) {
+      missing.push({
+        label: "체감안전도 설문 2번",
+        target: document.querySelector('input[name="safeFeel2"]')
+      });
+    }
+
+    if (!safeFeel3) {
+      missing.push({
+        label: "체감안전도 설문 3번",
+        target: document.querySelector('input[name="safeFeel3"]')
+      });
+    }
+
+    if (!safeFeel4) {
+      missing.push({
+        label: "체감안전도 설문 4번",
+        target: document.querySelector('input[name="safeFeel4"]')
+      });
+    }
+
+    if (!safeFeel5) {
+      missing.push({
+        label: "체감안전도 설문 5번",
+        target: document.querySelector('input[name="safeFeel5"]')
+      });
+    }
+
     if (selectedLat === null || selectedLon === null) {
       missing.push({
         label: "지도 위치 선택",
@@ -223,6 +427,76 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     return missing;
+  }
+
+  async function fetchStations() {
+    const supabaseUrl = window.APP_CONFIG?.SUPABASE_URL;
+    const anonKey = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !anonKey) {
+      console.warn("Supabase 설정값이 없어 stations를 불러오지 못했습니다.");
+      return [];
+    }
+
+    const url =
+      `${supabaseUrl}/rest/v1/stations` +
+      `?select=id,station_name,station_label,area_name,is_active` +
+      `&is_active=eq.true` +
+      `&order=id.asc`;
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`
+      }
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error("경찰서 목록 조회 실패: " + errorText);
+    }
+
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
+  }
+
+  async function insertApplication(payload) {
+    const supabaseUrl = window.APP_CONFIG?.SUPABASE_URL;
+    const anonKey = window.APP_CONFIG?.SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !anonKey) {
+      throw new Error("Supabase 설정값이 없습니다. config.js를 확인해주세요.");
+    }
+
+    const response = await fetch(`${supabaseUrl}/rest/v1/applications`, {
+      method: "POST",
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`,
+        "Content-Type": "application/json",
+        Prefer: "return=representation"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      let message = "신청 저장 중 오류가 발생했습니다.";
+      try {
+        const err = await response.json();
+        message =
+          err?.message ||
+          err?.hint ||
+          err?.details ||
+          JSON.stringify(err);
+      } catch (e) {
+        message = await response.text();
+      }
+      throw new Error(message);
+    }
+
+    const data = await response.json();
+    return Array.isArray(data) ? data[0] : data;
   }
 
   if (phoneInput) {
@@ -263,6 +537,18 @@ document.addEventListener("DOMContentLoaded", function () {
 
   async function initVworldMap() {
     try {
+      if (submitSectionDesc) {
+        submitSectionDesc.textContent = "입력 내용을 확인한 뒤 신청서 제출 버튼을 누르면 실제로 접수됩니다.";
+      }
+
+      setResultMessage("신청서를 작성한 뒤 신청서 제출 버튼을 누르면 실제로 접수됩니다.");
+
+      try {
+        stationRows = await fetchStations();
+      } catch (stationError) {
+        console.warn(stationError);
+      }
+
       const apiKey = window.APP_CONFIG?.VWORLD_API_KEY;
       if (!apiKey) {
         setResultMessage("V월드 API 키가 비어 있습니다. config.js를 확인하세요.");
@@ -305,6 +591,8 @@ document.addEventListener("DOMContentLoaded", function () {
         )
       });
 
+      currentMap = map;
+
       const vBase = new vworld.Layers.Base("VBASE");
       map.addLayer(vBase);
 
@@ -319,6 +607,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
       const markerLayer = new OpenLayers.Layer.Markers("Markers");
       map.addLayer(markerLayer);
+      currentMarkerLayer = markerLayer;
 
       function updateSelectedPoint(lon, lat, sourceLabel = "지도 클릭") {
         selectedLon = lon;
@@ -452,7 +741,7 @@ document.addEventListener("DOMContentLoaded", function () {
       }
 
       if (submitBtn) {
-        submitBtn.addEventListener("click", function () {
+        submitBtn.addEventListener("click", async function () {
           const missingFields = validateRequiredFields();
 
           if (missingFields.length > 0) {
@@ -468,73 +757,132 @@ document.addEventListener("DOMContentLoaded", function () {
             return;
           }
 
-          const ownerName = document.getElementById("ownerName")?.value.trim() || "";
-          const phone = phoneInput?.value.trim() || "";
-          const shopName = document.getElementById("shopName")?.value.trim() || "";
-          const businessType = businessTypeSelect?.value || "";
-          const businessTypeEtc = businessTypeEtcInput?.value.trim() || "";
-          const selectedAddress = selectedAddressInput?.value.trim() || "";
-          const detailAddress = detailAddressInput?.value.trim() || "";
-          const salesRange = getRadioValue("salesRange");
-          const annualSales = annualSalesInput?.value.trim() || "";
-          const submittedAt = formatDateTime(new Date());
+          setSubmitPending(true);
 
-          const businessTypeText =
-            businessType === "기타" && businessTypeEtc
-              ? `${businessType} (${businessTypeEtc})`
-              : businessType;
+          try {
+            const ownerName = document.getElementById("ownerName")?.value.trim() || "";
+            const phone = phoneInput?.value.trim() || "";
+            const shopName = document.getElementById("shopName")?.value.trim() || "";
+            const businessType = businessTypeSelect?.value || "";
+            const businessTypeEtc = businessTypeEtcInput?.value.trim() || "";
+            const typedAddress = addressInput?.value.trim() || "";
+            const selectedAddress = selectedAddressInput?.value.trim() || "";
+            const detailAddress = detailAddressInput?.value.trim() || "";
+            const salesRange = getRadioValue("salesRange");
+            const annualSalesValue = annualSalesInput?.value.trim() || "";
+            const annualSalesNumber = parseNumberOrNull(annualSalesValue);
 
-          const fullAddress = detailAddress
-            ? `${selectedAddress}, ${detailAddress}`
-            : selectedAddress;
+            const crimeFear = getRadioValue("crimeFear");
+            const nightBusiness = getRadioValue("nightBusiness");
+            const darkArea = getRadioValue("darkArea");
+            const soloWork = getRadioValue("soloWork");
+            const cctvStatus = getRadioValue("cctvStatus");
+            const securityCompany = getRadioValue("securityCompany");
+            const hasBell = getRadioValue("hasBell");
+            const safeFeels = getSafeFeelAnswers();
 
-          const infoRows =
-            createInfoRow("접수일시", submittedAt) +
-            createInfoRow("성명", ownerName) +
-            createInfoRow("연락처", phone) +
-            createInfoRow("점포명", shopName) +
-            createInfoRow("업종", businessTypeText) +
-            createInfoRow("주소", fullAddress) +
-            createInfoRow("연매출 구간", salesRange) +
-            createInfoRow("연매출 기재", annualSales || "(미입력)") +
-            createInfoRow("위도 / 경도", `${selectedLat.toFixed(6)} / ${selectedLon.toFixed(6)}`);
+            const matchedStation = inferStationByAddress(selectedAddress || typedAddress);
 
-          setResultMessage(`
-            <div style="padding:20px;border:1px solid #cfe0ff;border-radius:16px;background:#f8fbff;">
-              <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-                <div style="width:36px;height:36px;border-radius:999px;background:#e8f0ff;display:flex;align-items:center;justify-content:center;font-size:18px;">✓</div>
-                <div style="font-size:20px;font-weight:800;color:#1d4ed8;">신청서 제출이 완료되었습니다.</div>
+            const payload = {
+              applicant_name: ownerName,
+              business_name: shopName,
+              business_type: businessType || null,
+              business_type_other: businessType === "기타" ? (businessTypeEtc || null) : null,
+              phone: formatPhoneNumber(phone),
+              email: null,
+              address_road: selectedAddress,
+              address_jibun: null,
+              address_detail: detailAddress || null,
+              latitude: Number(selectedLat.toFixed(7)),
+              longitude: Number(selectedLon.toFixed(7)),
+              annual_sales: annualSalesNumber,
+              sales_band: salesRange || null,
+              has_cctv: cctvStatus !== "없음",
+              has_emergency_bell: hasBell === "예",
+              uses_security_company: securityCompany === "이용 중",
+              other_security: null,
+              apply_reason: buildApplyReason(),
+              requested_item: null,
+              etc_note: buildEtcNote(),
+              privacy_agreed: agreePrivacyInput?.checked || false,
+              notice_agreed: agreeNoticeInput?.checked || false,
+              survey_crime_anxiety: crimeFear || null,
+              survey_late_night: nightBusiness || null,
+              survey_dark_area: darkArea || null,
+              survey_single_worker: soloWork || null,
+              station_id: matchedStation ? matchedStation.id : null,
+              status: "submitted"
+            };
+
+            const inserted = await insertApplication(payload);
+
+            const businessTypeText =
+              businessType === "기타" && businessTypeEtc
+                ? `${businessType} (${businessTypeEtc})`
+                : businessType;
+
+            const fullAddress = detailAddress
+              ? `${selectedAddress}, ${detailAddress}`
+              : selectedAddress;
+
+            const infoRows =
+              createInfoRow("접수번호", inserted?.id ? String(inserted.id) : "(확인불가)") +
+              createInfoRow("접수일시", formatIsoToKoreanText(inserted?.submitted_at) || formatDateTime(new Date())) +
+              createInfoRow("성명", ownerName) +
+              createInfoRow("연락처", formatPhoneNumber(phone)) +
+              createInfoRow("점포명", shopName) +
+              createInfoRow("업종", businessTypeText) +
+              createInfoRow("주소", fullAddress) +
+              createInfoRow("관할 경찰서", matchedStation?.station_label || "(자동 판별 안됨)") +
+              createInfoRow("연매출 구간", salesRange) +
+              createInfoRow("연매출 기재", annualSalesValue || "(미입력)") +
+              createInfoRow("위도 / 경도", `${selectedLat.toFixed(6)} / ${selectedLon.toFixed(6)}`);
+
+            setResultMessage(`
+              <div style="padding:20px;border:1px solid #cfe0ff;border-radius:16px;background:#f8fbff;">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                  <div style="width:36px;height:36px;border-radius:999px;background:#e8f0ff;display:flex;align-items:center;justify-content:center;font-size:18px;">✓</div>
+                  <div style="font-size:20px;font-weight:800;color:#1d4ed8;">신청서가 정상 접수되었습니다.</div>
+                </div>
+
+                <div style="font-size:14px;line-height:1.8;color:#475569;margin-bottom:14px;">
+                  입력하신 신청 내용이 시스템에 정상 저장되었습니다.<br>
+                  신청 이후 관할 경찰서 CPO가 접수 내용을 검토할 예정입니다.
+                </div>
+
+                <div style="border:1px solid #e5e7eb;border-radius:12px;background:#ffffff;padding:6px 14px;margin-bottom:16px;">
+                  ${infoRows}
+                </div>
+
+                <div style="padding:14px 16px;border-radius:12px;background:#eef4ff;border:1px solid #d7e5ff;color:#1f3b63;line-height:1.8;font-size:14px;">
+                  <b>안내사항</b><br>
+                  1. 신청 이후 관할 경찰서 CPO가 접수 내용을 검토할 예정입니다.<br>
+                  2. 필요 시 사업자등록증, 매출현황 증빙자료 등 추가 서류 제출을 요청할 수 있습니다.<br>
+                  3. 필요 시 현장 확인 또는 연락이 진행될 수 있습니다.<br>
+                  4. 최종 선정 결과는 개별 연락드릴 예정입니다.
+                </div>
               </div>
+            `);
 
-              <div style="font-size:14px;line-height:1.8;color:#475569;margin-bottom:14px;">
-                입력하신 신청 내용이 정상적으로 접수된 화면 예시입니다.<br>
-                현재는 화면 구성 단계이므로 실제 저장 기능은 다음 단계에서 연결될 예정입니다.
+            if (resultBox) {
+              resultBox.scrollIntoView({
+                behavior: "smooth",
+                block: "center"
+              });
+            }
+          } catch (error) {
+            console.error(error);
+            setResultMessage(`
+              <div style="padding:16px;border:1px solid #fecaca;border-radius:12px;background:#fff1f2;color:#991b1b;line-height:1.8;">
+                <b>신청 저장 중 오류가 발생했습니다.</b><br>
+                ${escapeHtml(error.message || "알 수 없는 오류")}
               </div>
-
-              <div style="border:1px solid #e5e7eb;border-radius:12px;background:#ffffff;padding:6px 14px;margin-bottom:16px;">
-                ${infoRows}
-              </div>
-
-              <div style="padding:14px 16px;border-radius:12px;background:#eef4ff;border:1px solid #d7e5ff;color:#1f3b63;line-height:1.8;font-size:14px;">
-                <b>안내사항</b><br>
-                1. 신청 이후 관할 경찰서 CPO가 접수 내용을 검토할 예정입니다.<br>
-                2. 필요 시 사업자등록증, 매출현황 증빙자료 등 추가 서류 제출을 요청할 수 있습니다.<br>
-                3. 필요 시 현장 확인 또는 연락이 진행될 수 있습니다.<br>
-                4. 최종 선정 결과는 개별 연락드릴 예정입니다.
-              </div>
-            </div>
-          `);
-
-          if (resultBox) {
-            resultBox.scrollIntoView({
-              behavior: "smooth",
-              block: "center"
-            });
+            `);
+          } finally {
+            setSubmitPending(false);
           }
         });
       }
-
-      setResultMessage("신청서 화면 구성이 완료되었습니다. 항목을 입력한 뒤 제출 완료 화면을 확인해보세요.");
     } catch (error) {
       console.error(error);
       setResultMessage("오류: " + error.message);
