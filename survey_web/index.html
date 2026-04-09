@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>소상공인 방범지원 신청</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="page">
+    <div class="application-shell">
+
+      <div class="intro-card">
+        <div class="intro-header">
+          <img src="jeonnam_logo.png" alt="전라남도경찰청 로고" class="top-logo" />
+        </div>
+
+        <h1>소상공인 방범물품 지원 신청서</h1>
+
+        <p class="intro-text">
+          본 신청서는 소상공인 대상 방범물품 지원 신청을 위한 접수 페이지입니다.<br />
+          제출된 정보는 지원 대상 검토 및 현장 확인을 위한 용도로만 활용됩니다.
+        </p>
+
+        <div class="notice-box">
+          <p><strong>신청 전 확인사항</strong></p>
+          <p>※ 신청 이후 관할 경찰서 검토 과정에서 사업자등록증, 매출현황 증빙자료 등 추가 서류 제출을 요청할 수 있습니다.</p>
+          <p>※ 필요 시 현장 확인 또는 연락이 진행될 수 있습니다.</p>
+          <p>※ 최종 선정 결과는 개별 연락드릴 예정입니다.</p>
+          <p>※ 신청 관련 문의사항은 해당 시·군 관할 경찰서 범죄예방계로 문의하여 주시기 바랍니다.</p>
+        </div>
+
+        <div class="required-guide">
+          <span class="required-mark">*</span> 표시는 필수 입력 항목입니다.
+        </div>
+      </div>
+
+      <div class="section-card">
+        <h2 class="section-title">신청인 정보</h2>
+        <p class="section-desc">신청인과 점포 확인을 위한 기본 정보를 입력해주세요.</p>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="ownerName">성명 <span class="required-mark">*</span></label>
+            <input type="text" id="ownerName" placeholder="예: 홍길동" autocomplete="name" />
+          </div>
+
+          <div class="form-group">
+            <label for="phone">연락처 <span class="required-mark">*</span></label>
+            <input type="text" id="phone" placeholder="예: 010-1234-5678" autocomplete="tel" />
+            <p class="field-help">연락 가능한 휴대전화 번호를 입력해주세요.</p>
+          </div>
+
+          <div class="form-group full">
+            <label for="shopName">점포명 <span class="required-mark">*</span></label>
+            <input type="text" id="shopName" placeholder="예: 행복식당" autocomplete="organization" />
+          </div>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <h2 class="section-title">점포 정보</h2>
+        <p class="section-desc">점포 업종 정보를 입력해주세요.</p>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="businessType">업종 선택 <span class="required-mark">*</span></label>
+            <select id="businessType">
+              <option value="">선택하세요</option>
+              <option value="음식점">음식점</option>
+              <option value="카페">카페</option>
+              <option value="편의점">편의점</option>
+              <option value="소매점">소매점</option>
+              <option value="서비스업">서비스업</option>
+              <option value="기타">기타</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="businessTypeEtc">기타 업종 입력</label>
+            <input type="text" id="businessTypeEtc" placeholder="기타 업종일 경우 입력" />
+            <p class="field-help">업종 선택에서 ‘기타’를 선택한 경우에만 입력해주세요.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <h2 class="section-title">점포 위치</h2>
+        <p class="section-desc">주소 검색 후, 지도에서 실제 점포 위치를 다시 눌러 정확하게 조정할 수 있습니다.</p>
+
+        <div class="address-search-row">
+          <div class="form-group grow">
+            <label for="address">주소 입력 <span class="required-mark">*</span></label>
+            <input type="text" id="address" placeholder="예: 전라남도 목포시 ○○로 123" autocomplete="street-address" />
+          </div>
+          <button id="searchAddressBtn" type="button" class="secondary-btn">주소 검색</button>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group full">
+            <label for="selectedAddress">선택된 주소 <span class="required-mark">*</span></label>
+            <input type="text" id="selectedAddress" placeholder="주소 검색 결과가 여기에 표시됩니다." readonly />
+          </div>
+
+          <div class="form-group full">
+            <label for="detailAddress">상세 주소</label>
+            <input type="text" id="detailAddress" placeholder="예: 1층, 101호" />
+          </div>
+        </div>
+
+        <div class="map-guide">
+          선택한 주소 위치가 지도에 표시됩니다.<br />
+          위치가 맞지 않으면 <b>지도에서 원하는 지점을 다시 눌러서</b> 최종 위치를 수정해주세요.
+        </div>
+
+        <div id="map"></div>
+
+        <div id="locationInfo" class="location-info">
+          아직 위치가 선택되지 않았습니다.
+        </div>
+      </div>
+
+      <div class="section-card">
+        <h2 class="section-title">매출 정보</h2>
+        <p class="section-desc">지원 기준 검토를 위해 연매출 정보를 입력해주세요.</p>
+
+        <div class="question-group">
+          <label class="question-label">연매출 구간 <span class="required-mark">*</span></label>
+          <div class="radio-group vertical">
+            <label class="radio-item"><input type="radio" name="salesRange" value="5천만원 이하" /> 5천만원 이하</label>
+            <label class="radio-item"><input type="radio" name="salesRange" value="5천만원 초과 ~ 1억원 이하" /> 5천만원 초과 ~ 1억원 이하</label>
+            <label class="radio-item"><input type="radio" name="salesRange" value="1억원 초과 ~ 2억원 이하" /> 1억원 초과 ~ 2억원 이하</label>
+            <label class="radio-item"><input type="radio" name="salesRange" value="2억원 초과" /> 2억원 초과</label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="annualSales">연매출 기재</label>
+          <input type="text" id="annualSales" placeholder="예: 85,000,000" inputmode="numeric" />
+          <p class="field-help">숫자만 입력해도 되고, 쉼표가 포함되어도 됩니다.</p>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <h2 class="section-title">점포 환경 설문</h2>
+        <p class="section-desc">점포 운영 환경과 방범 여건을 확인하기 위한 문항입니다.</p>
+
+        <div class="question-group">
+          <label class="question-label">1. 최근 점포 운영 중 범죄피해 또는 위협을 느낀 적이 있습니까?</label>
+          <div class="radio-group">
+            <label class="radio-item"><input type="radio" name="crimeFear" value="전혀 없음" /> 전혀 없음</label>
+            <label class="radio-item"><input type="radio" name="crimeFear" value="거의 없음" /> 거의 없음</label>
+            <label class="radio-item"><input type="radio" name="crimeFear" value="가끔 있음" /> 가끔 있음</label>
+            <label class="radio-item"><input type="radio" name="crimeFear" value="자주 있음" /> 자주 있음</label>
+          </div>
+        </div>
+
+        <div class="question-group">
+          <label class="question-label">2. 야간 시간대(22시 이후) 영업을 하고 있습니까?</label>
+          <div class="radio-group">
+            <label class="radio-item"><input type="radio" name="nightBusiness" value="전혀 없음" /> 전혀 없음</label>
+            <label class="radio-item"><input type="radio" name="nightBusiness" value="가끔 있음" /> 가끔 있음</label>
+            <label class="radio-item"><input type="radio" name="nightBusiness" value="자주 있음" /> 자주 있음</label>
+          </div>
+        </div>
+
+        <div class="question-group">
+          <label class="question-label">3. 점포 주변이 어둡거나 인적이 드문 편입니까?</label>
+          <div class="radio-group">
+            <label class="radio-item"><input type="radio" name="darkArea" value="전혀 아님" /> 전혀 아님</label>
+            <label class="radio-item"><input type="radio" name="darkArea" value="보통" /> 보통</label>
+            <label class="radio-item"><input type="radio" name="darkArea" value="그렇다" /> 그렇다</label>
+          </div>
+        </div>
+
+        <div class="question-group">
+          <label class="question-label">4. 혼자 근무하는 시간이 많습니까?</label>
+          <div class="radio-group">
+            <label class="radio-item"><input type="radio" name="soloWork" value="전혀 없음" /> 전혀 없음</label>
+            <label class="radio-item"><input type="radio" name="soloWork" value="가끔 있음" /> 가끔 있음</label>
+            <label class="radio-item"><input type="radio" name="soloWork" value="자주 있음" /> 자주 있음</label>
+          </div>
+        </div>
+
+        <div class="question-group">
+          <label class="question-label">5. 점포 내 CCTV가 설치되어 있습니까?</label>
+          <div class="radio-group">
+            <label class="radio-item"><input type="radio" name="cctvStatus" value="없음" /> 없음</label>
+            <label class="radio-item"><input type="radio" name="cctvStatus" value="1~2대" /> 1~2대</label>
+            <label class="radio-item"><input type="radio" name="cctvStatus" value="3대 이상" /> 3대 이상</label>
+          </div>
+        </div>
+
+        <div class="question-group">
+          <label class="question-label">6. 사설경비업체를 이용하고 있습니까?</label>
+          <div class="radio-group">
+            <label class="radio-item"><input type="radio" name="securityCompany" value="이용하지 않음" /> 이용하지 않음</label>
+            <label class="radio-item"><input type="radio" name="securityCompany" value="이용 중" /> 이용 중</label>
+          </div>
+        </div>
+
+        <div class="question-group">
+          <label class="question-label">7. 비상벨 또는 긴급신고 장치가 설치되어 있습니까?</label>
+          <div class="radio-group">
+            <label class="radio-item"><input type="radio" name="hasBell" value="예" /> 예</label>
+            <label class="radio-item"><input type="radio" name="hasBell" value="아니오" /> 아니오</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <h2 class="section-title">체감안전도 설문</h2>
+        <p class="section-desc">점주님이 실제로 느끼는 안전 수준을 확인하기 위한 항목입니다.</p>
+
+        <div class="question-group">
+          <label class="question-label">1. 현재 점포는 전반적으로 안전하다고 느낍니다.</label>
+          <div class="radio-group vertical">
+            <label class="radio-item"><input type="radio" name="safeFeel1" value="매우 그렇지 않다" /> 매우 그렇지 않다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel1" value="그렇지 않다" /> 그렇지 않다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel1" value="보통이다" /> 보통이다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel1" value="그렇다" /> 그렇다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel1" value="매우 그렇다" /> 매우 그렇다</label>
+          </div>
+        </div>
+
+        <div class="question-group">
+          <label class="question-label">2. 야간 시간대에도 점포 주변이 비교적 안전하다고 느낍니다.</label>
+          <div class="radio-group vertical">
+            <label class="radio-item"><input type="radio" name="safeFeel2" value="매우 그렇지 않다" /> 매우 그렇지 않다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel2" value="그렇지 않다" /> 그렇지 않다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel2" value="보통이다" /> 보통이다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel2" value="그렇다" /> 그렇다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel2" value="매우 그렇다" /> 매우 그렇다</label>
+          </div>
+        </div>
+
+        <div class="question-group">
+          <label class="question-label">3. 혼자 근무할 때에도 불안감이 크지 않습니다.</label>
+          <div class="radio-group vertical">
+            <label class="radio-item"><input type="radio" name="safeFeel3" value="매우 그렇지 않다" /> 매우 그렇지 않다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel3" value="그렇지 않다" /> 그렇지 않다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel3" value="보통이다" /> 보통이다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel3" value="그렇다" /> 그렇다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel3" value="매우 그렇다" /> 매우 그렇다</label>
+          </div>
+        </div>
+
+        <div class="question-group">
+          <label class="question-label">4. 현재 점포는 외부 침입이나 범죄로부터 어느 정도 보호되고 있다고 느낍니다.</label>
+          <div class="radio-group vertical">
+            <label class="radio-item"><input type="radio" name="safeFeel4" value="매우 그렇지 않다" /> 매우 그렇지 않다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel4" value="그렇지 않다" /> 그렇지 않다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel4" value="보통이다" /> 보통이다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel4" value="그렇다" /> 그렇다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel4" value="매우 그렇다" /> 매우 그렇다</label>
+          </div>
+        </div>
+
+        <div class="question-group">
+          <label class="question-label">5. 점포에서 범죄피해가 발생할 가능성이 낮다고 느낍니다.</label>
+          <div class="radio-group vertical">
+            <label class="radio-item"><input type="radio" name="safeFeel5" value="매우 그렇지 않다" /> 매우 그렇지 않다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel5" value="그렇지 않다" /> 그렇지 않다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel5" value="보통이다" /> 보통이다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel5" value="그렇다" /> 그렇다</label>
+            <label class="radio-item"><input type="radio" name="safeFeel5" value="매우 그렇다" /> 매우 그렇다</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <h2 class="section-title">개인정보 수집·이용 동의</h2>
+        <p class="section-desc">신청 접수를 위해 아래 내용을 확인한 후 동의해주세요.</p>
+
+        <div class="privacy-box">
+          <p>본 신청과 관련하여 다음과 같이 개인정보를 수집·이용합니다.</p>
+          <p>1. 수집 항목: 성명, 연락처, 점포명, 점포 주소, 업종, 연매출 정보 등</p>
+          <p>2. 수집 목적: 소상공인 방범지원 신청 접수, 대상자 검토, 현장 확인, 최종 선정 및 결과 안내</p>
+          <p>3. 보유 및 이용기간: 관련 법령 및 내부 기준에 따름</p>
+          <p>4. 동의 거부 권리: 동의를 거부할 수 있으나, 이 경우 신청 접수가 제한될 수 있습니다.</p>
+        </div>
+
+        <div class="checkbox-group">
+          <label class="check-item"><input type="checkbox" id="agreePrivacy" /> 위 내용을 확인하였으며, 개인정보 수집·이용에 동의합니다. (필수)</label>
+          <label class="check-item"><input type="checkbox" id="agreeNotice" /> 위 유의사항을 확인하였습니다. (필수)</label>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <h2 class="section-title">신청서 확인</h2>
+        <p class="section-desc">현재는 화면 구성 단계입니다. 제출 버튼을 누르면 입력 내용 미리보기가 표시됩니다.</p>
+
+        <div id="resultBox" class="result-box">
+          아직 제출 전입니다. 입력을 마친 뒤 <b>신청서 제출</b> 버튼을 누르면 미리보기가 표시됩니다.
+        </div>
+
+        <button id="submitBtn" type="button" class="primary-btn">신청서 제출</button>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
