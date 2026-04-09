@@ -167,11 +167,8 @@ document.addEventListener("DOMContentLoaded", function () {
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
   }
 
-  function formatIsoToKoreanText(isoText) {
-    if (!isoText) return "";
-    const d = new Date(isoText);
-    if (Number.isNaN(d.getTime())) return isoText;
-    return formatDateTime(d);
+  function normalizeText(value) {
+    return String(value || "").replace(/\s/g, "");
   }
 
   function createInfoRow(label, value) {
@@ -183,10 +180,6 @@ document.addEventListener("DOMContentLoaded", function () {
         <div style="color:#111827;line-height:1.7;">${safeValue}</div>
       </div>
     `;
-  }
-
-  function normalizeText(value) {
-    return String(value || "").replace(/\s/g, "");
   }
 
   function getSafeFeelAnswers() {
@@ -475,7 +468,7 @@ document.addEventListener("DOMContentLoaded", function () {
         apikey: anonKey,
         Authorization: `Bearer ${anonKey}`,
         "Content-Type": "application/json",
-        Prefer: "return=representation"
+        Prefer: "return=minimal"
       },
       body: JSON.stringify(payload)
     });
@@ -495,8 +488,7 @@ document.addEventListener("DOMContentLoaded", function () {
       throw new Error(message);
     }
 
-    const data = await response.json();
-    return Array.isArray(data) ? data[0] : data;
+    return { ok: true };
   }
 
   if (phoneInput) {
@@ -779,7 +771,6 @@ document.addEventListener("DOMContentLoaded", function () {
             const cctvStatus = getRadioValue("cctvStatus");
             const securityCompany = getRadioValue("securityCompany");
             const hasBell = getRadioValue("hasBell");
-            const safeFeels = getSafeFeelAnswers();
 
             const matchedStation = inferStationByAddress(selectedAddress || typedAddress);
 
@@ -814,7 +805,7 @@ document.addEventListener("DOMContentLoaded", function () {
               status: "submitted"
             };
 
-            const inserted = await insertApplication(payload);
+            await insertApplication(payload);
 
             const businessTypeText =
               businessType === "기타" && businessTypeEtc
@@ -826,8 +817,8 @@ document.addEventListener("DOMContentLoaded", function () {
               : selectedAddress;
 
             const infoRows =
-              createInfoRow("접수번호", inserted?.id ? String(inserted.id) : "(확인불가)") +
-              createInfoRow("접수일시", formatIsoToKoreanText(inserted?.submitted_at) || formatDateTime(new Date())) +
+              createInfoRow("접수상태", "정상 저장 완료") +
+              createInfoRow("접수일시", formatDateTime(new Date())) +
               createInfoRow("성명", ownerName) +
               createInfoRow("연락처", formatPhoneNumber(phone)) +
               createInfoRow("점포명", shopName) +
