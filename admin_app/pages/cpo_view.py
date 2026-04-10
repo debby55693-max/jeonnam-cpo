@@ -404,13 +404,7 @@ def _render_detail(row: Dict[str, Any], supabase, user_id: str, station_id: Any)
 
     st.markdown("#### 위치 정보")
     st.write(f"**주소**: {_full_address(row)}")
-
-    lat = _safe_float(row.get("latitude"), 0.0)
-    lon = _safe_float(row.get("longitude"), 0.0)
-    if lat and lon:
-        _render_map([row], row)
-    else:
-        st.info("저장된 위도/경도 값이 없습니다.")
+    st.write("※ 상세정보 안 지도는 제거하고, 상단 접수 현황 지도와 '📍 지도에서 보기' 버튼으로 위치를 확인합니다.")
 
     st.markdown("#### 설문 응답")
     st.write(f"- 범죄 불안 경험: {_safe_str(row.get('survey_crime_anxiety')) or '-'}")

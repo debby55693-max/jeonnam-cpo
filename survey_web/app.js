@@ -19,22 +19,19 @@ document.addEventListener("DOMContentLoaded", function () {
 
   let selectedLon = null;
   let selectedLat = null;
+  let selectedOfficialAddress = "";
+  let selectedSigungu = "";
   let stationRows = [];
   let currentMap = null;
   let currentMarkerLayer = null;
   let isSubmitting = false;
-  let hasJustSubmitted = false;
 
   function setResultMessage(message) {
-    if (resultBox) {
-      resultBox.innerHTML = message;
-    }
+    if (resultBox) resultBox.innerHTML = message;
   }
 
   function setLocationMessage(message) {
-    if (locationInfo) {
-      locationInfo.innerHTML = message;
-    }
+    if (locationInfo) locationInfo.innerHTML = message;
   }
 
   function setSubmitPending(isPending) {
@@ -73,9 +70,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
       function cleanup() {
         clearTimeout(timer);
-        if (script.parentNode) {
-          script.parentNode.removeChild(script);
-        }
+        if (script.parentNode) script.parentNode.removeChild(script);
         try {
           delete window[callbackName];
         } catch (e) {
@@ -149,15 +144,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function focusAndScroll(target) {
     if (!target) return;
-
-    if (typeof target.focus === "function") {
-      target.focus();
-    }
-
-    target.scrollIntoView({
-      behavior: "smooth",
-      block: "center"
-    });
+    if (typeof target.focus === "function") target.focus();
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
   function formatDateTime(date) {
@@ -229,9 +217,38 @@ document.addEventListener("DOMContentLoaded", function () {
     ].join("\n");
   }
 
-  function inferStationByAddress(addressText) {
-    const normalized = normalizeText(addressText);
-    if (!normalized || !Array.isArray(stationRows) || stationRows.length === 0) {
+  function buildOfficialAddressFromRefined(refined) {
+    if (!refined) return "";
+    if (refined.text && String(refined.text).trim()) {
+      return String(refined.text).trim();
+    }
+
+    const s = refined.structure || {};
+    const parts = [
+      s.level1,
+      s.level2,
+      s.level3,
+      s.level4A,
+      s.level4L,
+      s.level5,
+      s.detail
+    ]
+      .map((v) => String(v || "").trim())
+      .filter(Boolean);
+
+    return parts.join(" ").replace(/\s+/g, " ").trim();
+  }
+
+  function extractSigunguFromRefined(refined) {
+    const s = refined?.structure || {};
+    return String(s.level2 || "").trim();
+  }
+
+  function inferStationByAddress(addressText, sigunguText = "") {
+    const normalizedAddress = normalizeText(addressText);
+    const normalizedSigungu = normalizeText(sigunguText);
+
+    if ((!normalizedAddress && !normalizedSigungu) || !Array.isArray(stationRows) || stationRows.length === 0) {
       return null;
     }
 
@@ -243,12 +260,16 @@ document.addEventListener("DOMContentLoaded", function () {
 
       let score = 0;
 
-      if (normalized.includes(`${areaName}시`)) score = 4;
-      else if (normalized.includes(`${areaName}군`)) score = 4;
-      else if (normalized.includes(`${areaName}구`)) score = 4;
-      else if (normalized.includes(areaName)) score = 3;
-      else if (normalized.includes(String(row.station_name || "").trim())) score = 2;
-      else if (normalized.includes(String(row.station_label || "").replace("경찰서", "").trim())) score = 1;
+      if (normalizedSigungu === `${areaName}시`) score = 10;
+      else if (normalizedSigungu === `${areaName}군`) score = 10;
+      else if (normalizedSigungu === `${areaName}구`) score = 10;
+      else if (normalizedSigungu.includes(areaName)) score = 9;
+      else if (normalizedAddress.includes(`${areaName}시`)) score = 8;
+      else if (normalizedAddress.includes(`${areaName}군`)) score = 8;
+      else if (normalizedAddress.includes(`${areaName}구`)) score = 8;
+      else if (normalizedAddress.includes(areaName)) score = 7;
+      else if (normalizedAddress.includes(String(row.station_name || "").trim())) score = 4;
+      else if (normalizedAddress.includes(String(row.station_label || "").replace("경찰서", "").trim())) score = 3;
 
       if (score > 0) {
         candidates.push({ row, score });
@@ -285,9 +306,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const missing = [];
 
-    if (!ownerName) {
-      missing.push({ label: "성명", target: document.getElementById("ownerName") });
-    }
+    if (!ownerName) missing.push({ label: "성명", target: document.getElementById("ownerName") });
 
     if (!phone) {
       missing.push({ label: "연락처", target: phoneInput });
@@ -295,131 +314,60 @@ document.addEventListener("DOMContentLoaded", function () {
       missing.push({ label: "연락처 형식 확인", target: phoneInput });
     }
 
-    if (!shopName) {
-      missing.push({ label: "점포명", target: document.getElementById("shopName") });
-    }
-
-    if (!businessType) {
-      missing.push({ label: "업종 선택", target: businessTypeSelect });
-    }
+    if (!shopName) missing.push({ label: "점포명", target: document.getElementById("shopName") });
+    if (!businessType) missing.push({ label: "업종 선택", target: businessTypeSelect });
 
     if (businessType === "기타" && !businessTypeEtc) {
       missing.push({ label: "기타 업종 입력", target: businessTypeEtcInput });
     }
 
-    if (!address) {
-      missing.push({ label: "주소 입력", target: addressInput });
-    }
-
-    if (!selectedAddress) {
-      missing.push({ label: "주소 검색", target: addressInput });
-    }
+    if (!address) missing.push({ label: "주소 입력", target: addressInput });
+    if (!selectedAddress) missing.push({ label: "주소 검색", target: addressInput });
 
     if (!salesRange) {
-      missing.push({
-        label: "연매출 구간",
-        target: document.querySelector('input[name="salesRange"]')
-      });
+      missing.push({ label: "연매출 구간", target: document.querySelector('input[name="salesRange"]') });
     }
 
     if (!crimeFear) {
-      missing.push({
-        label: "범죄피해 또는 위협 경험",
-        target: document.querySelector('input[name="crimeFear"]')
-      });
+      missing.push({ label: "범죄피해 또는 위협 경험", target: document.querySelector('input[name="crimeFear"]') });
     }
 
     if (!nightBusiness) {
-      missing.push({
-        label: "야간 영업 여부",
-        target: document.querySelector('input[name="nightBusiness"]')
-      });
+      missing.push({ label: "야간 영업 여부", target: document.querySelector('input[name="nightBusiness"]') });
     }
 
     if (!darkArea) {
-      missing.push({
-        label: "점포 주변 환경",
-        target: document.querySelector('input[name="darkArea"]')
-      });
+      missing.push({ label: "점포 주변 환경", target: document.querySelector('input[name="darkArea"]') });
     }
 
     if (!soloWork) {
-      missing.push({
-        label: "혼자 근무 시간",
-        target: document.querySelector('input[name="soloWork"]')
-      });
+      missing.push({ label: "혼자 근무 시간", target: document.querySelector('input[name="soloWork"]') });
     }
 
     if (!cctvStatus) {
-      missing.push({
-        label: "점포 내 CCTV 설치 여부",
-        target: document.querySelector('input[name="cctvStatus"]')
-      });
+      missing.push({ label: "점포 내 CCTV 설치 여부", target: document.querySelector('input[name="cctvStatus"]') });
     }
 
     if (!securityCompany) {
-      missing.push({
-        label: "사설경비업체 이용 여부",
-        target: document.querySelector('input[name="securityCompany"]')
-      });
+      missing.push({ label: "사설경비업체 이용 여부", target: document.querySelector('input[name="securityCompany"]') });
     }
 
     if (!hasBell) {
-      missing.push({
-        label: "비상벨 설치 여부",
-        target: document.querySelector('input[name="hasBell"]')
-      });
+      missing.push({ label: "비상벨 설치 여부", target: document.querySelector('input[name="hasBell"]') });
     }
 
-    if (!safeFeel1) {
-      missing.push({
-        label: "체감안전도 설문 1번",
-        target: document.querySelector('input[name="safeFeel1"]')
-      });
-    }
-
-    if (!safeFeel2) {
-      missing.push({
-        label: "체감안전도 설문 2번",
-        target: document.querySelector('input[name="safeFeel2"]')
-      });
-    }
-
-    if (!safeFeel3) {
-      missing.push({
-        label: "체감안전도 설문 3번",
-        target: document.querySelector('input[name="safeFeel3"]')
-      });
-    }
-
-    if (!safeFeel4) {
-      missing.push({
-        label: "체감안전도 설문 4번",
-        target: document.querySelector('input[name="safeFeel4"]')
-      });
-    }
-
-    if (!safeFeel5) {
-      missing.push({
-        label: "체감안전도 설문 5번",
-        target: document.querySelector('input[name="safeFeel5"]')
-      });
-    }
+    if (!safeFeel1) missing.push({ label: "체감안전도 설문 1번", target: document.querySelector('input[name="safeFeel1"]') });
+    if (!safeFeel2) missing.push({ label: "체감안전도 설문 2번", target: document.querySelector('input[name="safeFeel2"]') });
+    if (!safeFeel3) missing.push({ label: "체감안전도 설문 3번", target: document.querySelector('input[name="safeFeel3"]') });
+    if (!safeFeel4) missing.push({ label: "체감안전도 설문 4번", target: document.querySelector('input[name="safeFeel4"]') });
+    if (!safeFeel5) missing.push({ label: "체감안전도 설문 5번", target: document.querySelector('input[name="safeFeel5"]') });
 
     if (selectedLat === null || selectedLon === null) {
-      missing.push({
-        label: "지도 위치 선택",
-        target: document.getElementById("map")
-      });
+      missing.push({ label: "지도 위치 선택", target: document.getElementById("map") });
     }
 
-    if (!agreePrivacy) {
-      missing.push({ label: "개인정보 수집·이용 동의", target: agreePrivacyInput });
-    }
-
-    if (!agreeNotice) {
-      missing.push({ label: "유의사항 확인", target: agreeNoticeInput });
-    }
+    if (!agreePrivacy) missing.push({ label: "개인정보 수집·이용 동의", target: agreePrivacyInput });
+    if (!agreeNotice) missing.push({ label: "유의사항 확인", target: agreeNoticeInput });
 
     return missing;
   }
@@ -430,22 +378,9 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
-  function clearMarkerAndLocation() {
-    selectedLon = null;
-    selectedLat = null;
-
-    if (currentMarkerLayer && typeof currentMarkerLayer.clearMarkers === "function") {
-      currentMarkerLayer.clearMarkers();
-    }
-
-    setLocationMessage("주소 검색 후 지도를 클릭하면 최종 위치가 선택됩니다.");
-  }
-
   function resetApplicationForm() {
     const form = document.querySelector("form");
-    if (form) {
-      form.reset();
-    }
+    if (form) form.reset();
 
     if (phoneInput) phoneInput.value = "";
     if (annualSalesInput) annualSalesInput.value = "";
@@ -479,9 +414,18 @@ document.addEventListener("DOMContentLoaded", function () {
     if (agreePrivacyInput) agreePrivacyInput.checked = false;
     if (agreeNoticeInput) agreeNoticeInput.checked = false;
 
-    clearMarkerAndLocation();
+    selectedLon = null;
+    selectedLat = null;
+    selectedOfficialAddress = "";
+    selectedSigungu = "";
 
-    if (currentMap && currentMap.displayProjection && currentMap.projection) {
+    if (currentMarkerLayer && typeof currentMarkerLayer.clearMarkers === "function") {
+      currentMarkerLayer.clearMarkers();
+    }
+
+    setLocationMessage("주소 검색 후 지도를 클릭하면 최종 위치가 선택됩니다.");
+
+    if (currentMap && typeof currentMap.setCenter === "function" && currentMap.displayProjection && currentMap.projection) {
       const centerLon = 126.463;
       const centerLat = 34.816;
       const center = new OpenLayers.LonLat(centerLon, centerLat).transform(
@@ -565,7 +509,6 @@ document.addEventListener("DOMContentLoaded", function () {
     phoneInput.addEventListener("input", function () {
       phoneInput.value = formatPhoneNumber(phoneInput.value);
     });
-
     phoneInput.addEventListener("blur", function () {
       phoneInput.value = formatPhoneNumber(phoneInput.value);
     });
@@ -575,7 +518,6 @@ document.addEventListener("DOMContentLoaded", function () {
     annualSalesInput.addEventListener("input", function () {
       annualSalesInput.value = formatNumberWithCommas(annualSalesInput.value);
     });
-
     annualSalesInput.addEventListener("blur", function () {
       annualSalesInput.value = formatNumberWithCommas(annualSalesInput.value);
     });
@@ -670,7 +612,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
       const markerLayer = new OpenLayers.Layer.Markers("Markers");
       map.addLayer(markerLayer);
-      current.addLayer(markerLayer);
       currentMarkerLayer = markerLayer;
 
       function updateSelectedPoint(lon, lat, sourceLabel = "지도 클릭") {
@@ -703,18 +644,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
         setLocationMessage(`
           <b>${sourceLabel}</b><br>
+          정식 주소: ${escapeHtml(selectedOfficialAddress || "(미확정)")}<br>
           선택 좌표(위도/경도): ${lat.toFixed(6)} / ${lon.toFixed(6)}
         `);
       }
-
-      map.events.register("click", map, function (e) {
-        const lonLat = map.getLonLatFromPixel(e.xy).transform(
-          map.projection,
-          map.displayProjection
-        );
-
-        updateSelectedPoint(lonLat.lon, lonLat.lat, "지도에서 최종 선택한 위치");
-      });
 
       async function requestVworldCoord(query, type) {
         const callbackName =
@@ -782,9 +715,16 @@ document.addEventListener("DOMContentLoaded", function () {
             return;
           }
 
-          selectedAddressInput.value = query;
+          const officialAddress =
+            buildOfficialAddressFromRefined(data.response.refined) || query;
+          const sigungu = extractSigunguFromRefined(data.response.refined);
+
+          selectedOfficialAddress = officialAddress;
+          selectedSigungu = sigungu;
+          selectedAddressInput.value = officialAddress;
+
           updateSelectedPoint(lon, lat, "주소 검색 결과 위치");
-          setResultMessage("주소 검색이 완료되었습니다. 위치가 맞지 않으면 지도에서 다시 선택해주세요.");
+          setResultMessage("주소 검색이 완료되었습니다. 정식 주소가 반영되었습니다. 위치가 맞지 않으면 지도에서 다시 선택해주세요.");
         } catch (error) {
           console.error(error);
           setResultMessage("주소 검색 중 오류가 발생했습니다: " + error.message);
@@ -804,15 +744,19 @@ document.addEventListener("DOMContentLoaded", function () {
         });
       }
 
+      map.events.register("click", map, function (e) {
+        const lonLat = map.getLonLatFromPixel(e.xy).transform(
+          map.projection,
+          map.displayProjection
+        );
+
+        updateSelectedPoint(lonLat.lon, lonLat.lat, "지도에서 최종 선택한 위치");
+      });
+
       if (submitBtn) {
         submitBtn.addEventListener("click", async function () {
           if (isSubmitting) {
             alert("이미 제출 중입니다. 잠시만 기다려주세요.");
-            return;
-          }
-
-          if (hasJustSubmitted) {
-            alert("이미 정상 접수되었습니다. 새로 신청하려면 초기화된 폼에 다시 입력해주세요.");
             return;
           }
 
@@ -840,8 +784,6 @@ document.addEventListener("DOMContentLoaded", function () {
             const shopName = document.getElementById("shopName")?.value.trim() || "";
             const businessType = businessTypeSelect?.value || "";
             const businessTypeEtc = businessTypeEtcInput?.value.trim() || "";
-            const typedAddress = addressInput?.value.trim() || "";
-            const selectedAddress = selectedAddressInput?.value.trim() || "";
             const detailAddress = detailAddressInput?.value.trim() || "";
             const salesRange = getRadioValue("salesRange");
             const annualSalesValue = annualSalesInput?.value.trim() || "";
@@ -855,7 +797,10 @@ document.addEventListener("DOMContentLoaded", function () {
             const securityCompany = getRadioValue("securityCompany");
             const hasBell = getRadioValue("hasBell");
 
-            const matchedStation = inferStationByAddress(selectedAddress || typedAddress);
+            const matchedStation = inferStationByAddress(
+              selectedOfficialAddress || selectedAddressInput.value,
+              selectedSigungu
+            );
 
             const payload = {
               applicant_name: ownerName,
@@ -864,7 +809,7 @@ document.addEventListener("DOMContentLoaded", function () {
               business_type_other: businessType === "기타" ? (businessTypeEtc || null) : null,
               phone: formatPhoneNumber(phone),
               email: null,
-              address_road: selectedAddress,
+              address_road: selectedOfficialAddress || selectedAddressInput.value,
               address_jibun: null,
               address_detail: detailAddress || null,
               latitude: Number(selectedLat.toFixed(7)),
@@ -889,7 +834,6 @@ document.addEventListener("DOMContentLoaded", function () {
             };
 
             await insertApplication(payload);
-            hasJustSubmitted = true;
 
             const businessTypeText =
               businessType === "기타" && businessTypeEtc
@@ -897,21 +841,12 @@ document.addEventListener("DOMContentLoaded", function () {
                 : businessType;
 
             const fullAddress = detailAddress
-              ? `${selectedAddress}, ${detailAddress}`
-              : selectedAddress;
+              ? `${selectedOfficialAddress || selectedAddressInput.value}, ${detailAddress}`
+              : (selectedOfficialAddress || selectedAddressInput.value);
 
-            const infoRows =
-              createInfoRow("접수상태", "정상 저장 완료") +
-              createInfoRow("접수일시", formatDateTime(new Date())) +
-              createInfoRow("성명", ownerName) +
-              createInfoRow("연락처", formatPhoneNumber(phone)) +
-              createInfoRow("점포명", shopName) +
-              createInfoRow("업종", businessTypeText) +
-              createInfoRow("주소", fullAddress) +
-              createInfoRow("관할 경찰서", matchedStation?.station_label || "(자동 판별 안됨)") +
-              createInfoRow("연매출 구간", salesRange) +
-              createInfoRow("연매출 기재", annualSalesValue || "(미입력)") +
-              createInfoRow("위도 / 경도", `${selectedLat.toFixed(6)} / ${selectedLon.toFixed(6)}`);
+            alert("신청서가 정상 접수되었습니다.");
+
+            resetApplicationForm();
 
             setResultMessage(`
               <div style="padding:20px;border:1px solid #cfe0ff;border-radius:16px;background:#f8fbff;">
@@ -926,7 +861,16 @@ document.addEventListener("DOMContentLoaded", function () {
                 </div>
 
                 <div style="border:1px solid #e5e7eb;border-radius:12px;background:#ffffff;padding:6px 14px;margin-bottom:16px;">
-                  ${infoRows}
+                  ${createInfoRow("접수상태", "정상 저장 완료")}
+                  ${createInfoRow("접수일시", formatDateTime(new Date()))}
+                  ${createInfoRow("성명", ownerName)}
+                  ${createInfoRow("연락처", formatPhoneNumber(phone))}
+                  ${createInfoRow("점포명", shopName)}
+                  ${createInfoRow("업종", businessTypeText)}
+                  ${createInfoRow("주소", fullAddress)}
+                  ${createInfoRow("관할 경찰서", matchedStation?.station_label || "(자동 판별 안됨)")}
+                  ${createInfoRow("연매출 구간", salesRange)}
+                  ${createInfoRow("연매출 기재", annualSalesValue || "(미입력)")}
                 </div>
 
                 <div style="padding:14px 16px;border-radius:12px;background:#eef4ff;border:1px solid #d7e5ff;color:#1f3b63;line-height:1.8;font-size:14px;">
@@ -940,20 +884,10 @@ document.addEventListener("DOMContentLoaded", function () {
             `);
 
             if (resultBox) {
-              resultBox.scrollIntoView({
-                behavior: "smooth",
-                block: "center"
-              });
+              resultBox.scrollIntoView({ behavior: "smooth", block: "center" });
             }
-
-            alert("신청서가 정상 접수되었습니다.");
-
-            resetApplicationForm();
-            hasJustSubmitted = false;
-            setResultMessage("신청서를 작성한 뒤 신청서 제출 버튼을 누르면 실제로 접수됩니다.");
           } catch (error) {
             console.error(error);
-            hasJustSubmitted = false;
             setResultMessage(`
               <div style="padding:16px;border:1px solid #fecaca;border-radius:12px;background:#fff1f2;color:#991b1b;line-height:1.8;">
                 <b>신청 저장 중 오류가 발생했습니다.</b><br>
