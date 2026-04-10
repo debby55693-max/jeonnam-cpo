@@ -22,6 +22,8 @@ document.addEventListener("DOMContentLoaded", function () {
   let stationRows = [];
   let currentMap = null;
   let currentMarkerLayer = null;
+  let isSubmitting = false;
+  let hasJustSubmitted = false;
 
   function setResultMessage(message) {
     if (resultBox) {
@@ -422,6 +424,74 @@ document.addEventListener("DOMContentLoaded", function () {
     return missing;
   }
 
+  function resetRadioGroup(name) {
+    document.querySelectorAll(`input[name="${name}"]`).forEach((input) => {
+      input.checked = false;
+    });
+  }
+
+  function clearMarkerAndLocation() {
+    selectedLon = null;
+    selectedLat = null;
+
+    if (currentMarkerLayer && typeof currentMarkerLayer.clearMarkers === "function") {
+      currentMarkerLayer.clearMarkers();
+    }
+
+    setLocationMessage("주소 검색 후 지도를 클릭하면 최종 위치가 선택됩니다.");
+  }
+
+  function resetApplicationForm() {
+    const form = document.querySelector("form");
+    if (form) {
+      form.reset();
+    }
+
+    if (phoneInput) phoneInput.value = "";
+    if (annualSalesInput) annualSalesInput.value = "";
+    if (businessTypeSelect) businessTypeSelect.value = "";
+    if (businessTypeEtcInput) {
+      businessTypeEtcInput.value = "";
+      businessTypeEtcInput.disabled = true;
+      businessTypeEtcInput.placeholder = "기타 업종일 경우 입력";
+    }
+
+    if (addressInput) addressInput.value = "";
+    if (selectedAddressInput) selectedAddressInput.value = "";
+    if (detailAddressInput) detailAddressInput.value = "";
+
+    [
+      "salesRange",
+      "crimeFear",
+      "nightBusiness",
+      "darkArea",
+      "soloWork",
+      "cctvStatus",
+      "securityCompany",
+      "hasBell",
+      "safeFeel1",
+      "safeFeel2",
+      "safeFeel3",
+      "safeFeel4",
+      "safeFeel5"
+    ].forEach(resetRadioGroup);
+
+    if (agreePrivacyInput) agreePrivacyInput.checked = false;
+    if (agreeNoticeInput) agreeNoticeInput.checked = false;
+
+    clearMarkerAndLocation();
+
+    if (currentMap && currentMap.displayProjection && currentMap.projection) {
+      const centerLon = 126.463;
+      const centerLat = 34.816;
+      const center = new OpenLayers.LonLat(centerLon, centerLat).transform(
+        currentMap.displayProjection,
+        currentMap.projection
+      );
+      currentMap.setCenter(center, 10);
+    }
+  }
+
   async function fetchStations() {
     const supabaseUrl = window.APP_CONFIG?.SUPABASE_URL;
     const anonKey = window.APP_CONFIG?.SUPABASE_ANON_KEY;
@@ -534,6 +604,7 @@ document.addEventListener("DOMContentLoaded", function () {
       }
 
       setResultMessage("신청서를 작성한 뒤 신청서 제출 버튼을 누르면 실제로 접수됩니다.");
+      setLocationMessage("주소 검색 후 지도를 클릭하면 최종 위치가 선택됩니다.");
 
       try {
         stationRows = await fetchStations();
@@ -599,6 +670,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
       const markerLayer = new OpenLayers.Layer.Markers("Markers");
       map.addLayer(markerLayer);
+      current.addLayer(markerLayer);
       currentMarkerLayer = markerLayer;
 
       function updateSelectedPoint(lon, lat, sourceLabel = "지도 클릭") {
@@ -734,6 +806,16 @@ document.addEventListener("DOMContentLoaded", function () {
 
       if (submitBtn) {
         submitBtn.addEventListener("click", async function () {
+          if (isSubmitting) {
+            alert("이미 제출 중입니다. 잠시만 기다려주세요.");
+            return;
+          }
+
+          if (hasJustSubmitted) {
+            alert("이미 정상 접수되었습니다. 새로 신청하려면 초기화된 폼에 다시 입력해주세요.");
+            return;
+          }
+
           const missingFields = validateRequiredFields();
 
           if (missingFields.length > 0) {
@@ -749,6 +831,7 @@ document.addEventListener("DOMContentLoaded", function () {
             return;
           }
 
+          isSubmitting = true;
           setSubmitPending(true);
 
           try {
@@ -806,6 +889,7 @@ document.addEventListener("DOMContentLoaded", function () {
             };
 
             await insertApplication(payload);
+            hasJustSubmitted = true;
 
             const businessTypeText =
               businessType === "기타" && businessTypeEtc
@@ -861,8 +945,15 @@ document.addEventListener("DOMContentLoaded", function () {
                 block: "center"
               });
             }
+
+            alert("신청서가 정상 접수되었습니다.");
+
+            resetApplicationForm();
+            hasJustSubmitted = false;
+            setResultMessage("신청서를 작성한 뒤 신청서 제출 버튼을 누르면 실제로 접수됩니다.");
           } catch (error) {
             console.error(error);
+            hasJustSubmitted = false;
             setResultMessage(`
               <div style="padding:16px;border:1px solid #fecaca;border-radius:12px;background:#fff1f2;color:#991b1b;line-height:1.8;">
                 <b>신청 저장 중 오류가 발생했습니다.</b><br>
@@ -870,6 +961,7 @@ document.addEventListener("DOMContentLoaded", function () {
               </div>
             `);
           } finally {
+            isSubmitting = false;
             setSubmitPending(false);
           }
         });
