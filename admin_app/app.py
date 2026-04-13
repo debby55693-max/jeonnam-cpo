@@ -1,7 +1,7 @@
 import streamlit as st
 
 from core.auth import login_ui
-from core.supabase_client import get_supabase
+from core.supabase_client import get_authed_client
 from pages.cpo_view import cpo_page
 
 
@@ -39,7 +39,20 @@ def main():
         st.error("CPO 계정의 관할 경찰서 정보가 올바르지 않습니다.")
         return
 
-    supabase = get_supabase()
+    access_token = st.session_state.get("token")
+    refresh_token = st.session_state.get("refresh_token")
+
+    if not access_token:
+        st.error("로그인 토큰이 없습니다. 다시 로그인해주세요.")
+        return
+
+    # 중요:
+    # anon 클라이언트가 아니라 로그인한 사용자의 access token이 반영된
+    # 인증 클라이언트를 사용해야 cpo_reviews insert/update 시 RLS를 통과할 수 있음
+    supabase = get_authed_client(
+        access_token=access_token,
+        refresh_token=refresh_token,
+    )
 
     # admin도 동일한 관리화면을 사용하되,
     # admin은 전체/관서별 조회가 가능하고
