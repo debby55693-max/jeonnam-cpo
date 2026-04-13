@@ -25,6 +25,35 @@ document.addEventListener("DOMContentLoaded", function () {
   let currentMap = null;
   let currentMarkerLayer = null;
   let isSubmitting = false;
+  let submitCooldownTimer = null;
+
+  const SUBMIT_LOCK_STORAGE_KEY = "jeonnam_security_support_submit_lock";
+  const SUBMIT_PENDING_LOCK_MS = 60 * 1000;
+  const SUBMIT_SUCCESS_COOLDOWN_MS = 7 * 1000;
+  const FALLBACK_STATION_AREAS = [
+    { area_name: "목포", station_label: "목포경찰서" },
+    { area_name: "여수", station_label: "여수경찰서" },
+    { area_name: "순천", station_label: "순천경찰서" },
+    { area_name: "나주", station_label: "나주경찰서" },
+    { area_name: "광양", station_label: "광양경찰서" },
+    { area_name: "고흥", station_label: "고흥경찰서" },
+    { area_name: "해남", station_label: "해남경찰서" },
+    { area_name: "무안", station_label: "무안경찰서" },
+    { area_name: "장흥", station_label: "장흥경찰서" },
+    { area_name: "보성", station_label: "보성경찰서" },
+    { area_name: "영광", station_label: "영광경찰서" },
+    { area_name: "화순", station_label: "화순경찰서" },
+    { area_name: "함평", station_label: "함평경찰서" },
+    { area_name: "영암", station_label: "영암경찰서" },
+    { area_name: "장성", station_label: "장성경찰서" },
+    { area_name: "강진", station_label: "강진경찰서" },
+    { area_name: "담양", station_label: "담양경찰서" },
+    { area_name: "곡성", station_label: "곡성경찰서" },
+    { area_name: "완도", station_label: "완도경찰서" },
+    { area_name: "진도", station_label: "진도경찰서" },
+    { area_name: "구례", station_label: "구례경찰서" },
+    { area_name: "신안", station_label: "신안경찰서" }
+  ];
 
   function setResultMessage(message) {
     if (resultBox) resultBox.innerHTML = message;
@@ -34,12 +63,200 @@ document.addEventListener("DOMContentLoaded", function () {
     if (locationInfo) locationInfo.innerHTML = message;
   }
 
-  function setSubmitPending(isPending) {
+  function setSubmitState(state) {
     if (!submitBtn) return;
-    submitBtn.disabled = isPending;
-    submitBtn.textContent = isPending ? "제출 중..." : "신청서 제출";
-    submitBtn.style.opacity = isPending ? "0.7" : "1";
-    submitBtn.style.cursor = isPending ? "not-allowed" : "pointer";
+
+    if (state === "pending") {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "제출 중입니다...";
+      submitBtn.style.opacity = "0.7";
+      submitBtn.style.cursor = "not-allowed";
+      return;
+    }
+
+    if (state === "success-lock") {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "접수 완료";
+      submitBtn.style.opacity = "0.7";
+      submitBtn.style.cursor = "not-allowed";
+      return;
+    }
+
+    submitBtn.disabled = false;
+    submitBtn.textContent = "신청서 제출";
+    submitBtn.style.opacity = "1";
+    submitBtn.style.cursor = "pointer";
+  }
+
+  function clearSubmitCooldownTimer() {
+    if (submitCooldownTimer) {
+      clearTimeout(submitCooldownTimer);
+      submitCooldownTimer = null;
+    }
+  }
+
+  function readSubmitLock() {
+    try {
+      const raw = sessionStorage.getItem(SUBMIT_LOCK_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return null;
+      return parsed;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeSubmitLock(state) {
+    try {
+      sessionStorage.setItem(
+        SUBMIT_LOCK_STORAGE_KEY,
+        JSON.stringify({
+          state,
+          ts: Date.now()
+        })
+      );
+    } catch (e) {}
+  }
+
+  function clearSubmitLock() {
+    try {
+      sessionStorage.removeItem(SUBMIT_LOCK_STORAGE_KEY);
+    } catch (e) {}
+  }
+
+  function getActiveSubmitLock() {
+    const lock = readSubmitLock();
+    if (!lock || !lock.state || !lock.ts) return null;
+
+    const age = Date.now() - Number(lock.ts || 0);
+
+    if (lock.state === "pending" && age < SUBMIT_PENDING_LOCK_MS) {
+      return { state: "pending", remainingMs: SUBMIT_PENDING_LOCK_MS - age };
+    }
+
+    if (lock.state === "success" && age < SUBMIT_SUCCESS_COOLDOWN_MS) {
+      return { state: "success", remainingMs: SUBMIT_SUCCESS_COOLDOWN_MS - age };
+    }
+
+    clearSubmitLock();
+    return null;
+  }
+
+  function applySubmitLockState() {
+    const lock = getActiveSubmitLock();
+
+    clearSubmitCooldownTimer();
+
+    if (!lock) {
+      setSubmitState("idle");
+      return;
+    }
+
+    if (lock.state === "pending") {
+      setSubmitState("pending");
+      return;
+    }
+
+    if (lock.state === "success") {
+      setSubmitState("success-lock");
+      submitCooldownTimer = setTimeout(() => {
+        clearSubmitLock();
+        setSubmitState("idle");
+      }, Math.max(lock.remainingMs, 0));
+    }
+  }
+
+  function ensureModalElement() {
+    let modal = document.getElementById("submitCompleteModal");
+    if (modal) return modal;
+
+    modal = document.createElement("div");
+    modal.id = "submitCompleteModal";
+    modal.style.position = "fixed";
+    modal.style.inset = "0";
+    modal.style.background = "rgba(15, 23, 42, 0.45)";
+    modal.style.display = "none";
+    modal.style.alignItems = "center";
+    modal.style.justifyContent = "center";
+    modal.style.padding = "20px";
+    modal.style.zIndex = "99999";
+
+    modal.innerHTML = `
+      <div style="width:100%;max-width:520px;background:#ffffff;border-radius:18px;box-shadow:0 20px 45px rgba(15,23,42,0.22);overflow:hidden;border:1px solid #dbe4f0;">
+        <div id="submitCompleteModalHeader" style="padding:18px 22px;background:#eef4ff;border-bottom:1px solid #d7e5ff;">
+          <div id="submitCompleteModalTitle" style="font-size:22px;font-weight:800;color:#1d4ed8;">신청이 정상적으로 접수되었습니다.</div>
+        </div>
+        <div style="padding:22px;">
+          <div id="submitCompleteModalBody" style="font-size:15px;line-height:1.9;color:#334155;"></div>
+          <button id="submitCompleteModalConfirm" type="button" style="margin-top:20px;width:100%;height:48px;border:none;border-radius:12px;background:#1f5aa8;color:#ffffff;font-size:16px;font-weight:800;cursor:pointer;">확인</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+    return modal;
+  }
+
+  function showModal(options = {}) {
+    const modal = ensureModalElement();
+    const titleEl = document.getElementById("submitCompleteModalTitle");
+    const bodyEl = document.getElementById("submitCompleteModalBody");
+    const confirmBtn = document.getElementById("submitCompleteModalConfirm");
+    const headerEl = document.getElementById("submitCompleteModalHeader");
+
+    if (!titleEl || !bodyEl || !confirmBtn || !headerEl) {
+      alert(options.title || "처리가 완료되었습니다.");
+      return Promise.resolve();
+    }
+
+    titleEl.textContent = options.title || "처리가 완료되었습니다.";
+    bodyEl.innerHTML = options.body || "";
+    confirmBtn.textContent = options.buttonText || "확인";
+
+    const tone = options.tone || "info";
+    if (tone === "success") {
+      headerEl.style.background = "#eefbf3";
+      headerEl.style.borderBottom = "1px solid #ccead5";
+      titleEl.style.color = "#166534";
+    } else if (tone === "error") {
+      headerEl.style.background = "#fff1f2";
+      headerEl.style.borderBottom = "1px solid #fecdd3";
+      titleEl.style.color = "#be123c";
+    } else {
+      headerEl.style.background = "#eef4ff";
+      headerEl.style.borderBottom = "1px solid #d7e5ff";
+      titleEl.style.color = "#1d4ed8";
+    }
+
+    modal.style.display = "flex";
+
+    return new Promise((resolve) => {
+      function closeModal() {
+        modal.style.display = "none";
+        confirmBtn.removeEventListener("click", onConfirm);
+        modal.removeEventListener("click", onBackdrop);
+        document.removeEventListener("keydown", onKeydown);
+        resolve();
+      }
+
+      function onConfirm() {
+        closeModal();
+      }
+
+      function onBackdrop(e) {
+        if (e.target === modal) closeModal();
+      }
+
+      function onKeydown(e) {
+        if (e.key === "Escape" || e.key === "Enter") closeModal();
+      }
+
+      confirmBtn.addEventListener("click", onConfirm);
+      modal.addEventListener("click", onBackdrop);
+      document.addEventListener("keydown", onKeydown);
+      confirmBtn.focus();
+    });
   }
 
   function loadScript(src, id) {
@@ -241,35 +458,66 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function extractSigunguFromRefined(refined) {
     const s = refined?.structure || {};
-    return String(s.level2 || "").trim();
+    const preferred = [
+      s.level2,
+      s.level3
+    ]
+      .map((v) => String(v || "").trim())
+      .find(Boolean);
+
+    if (preferred) return preferred;
+
+    const officialText = buildOfficialAddressFromRefined(refined);
+    const matches = officialText.match(/[가-힣]+(?:시|군|구)/g);
+    return matches && matches.length > 0 ? matches[0] : "";
+  }
+
+  function getStationCandidates() {
+    if (Array.isArray(stationRows) && stationRows.length > 0) {
+      return stationRows;
+    }
+    return FALLBACK_STATION_AREAS;
   }
 
   function inferStationByAddress(addressText, sigunguText = "") {
     const normalizedAddress = normalizeText(addressText);
     const normalizedSigungu = normalizeText(sigunguText);
+    const rows = getStationCandidates();
 
-    if ((!normalizedAddress && !normalizedSigungu) || !Array.isArray(stationRows) || stationRows.length === 0) {
+    if ((!normalizedAddress && !normalizedSigungu) || rows.length === 0) {
       return null;
     }
 
     const candidates = [];
 
-    stationRows.forEach((row) => {
+    rows.forEach((row) => {
       const areaName = String(row.area_name || "").trim();
-      if (!areaName) return;
+      const stationName = String(row.station_name || "").trim();
+      const stationLabel = String(row.station_label || "").trim();
+      if (!areaName && !stationName && !stationLabel) return;
+
+      const areaTokens = [
+        areaName,
+        `${areaName}시`,
+        `${areaName}군`,
+        `${areaName}구`,
+        stationName.replace("경찰서", "").trim(),
+        stationLabel.replace("경찰서", "").trim()
+      ]
+        .map((v) => normalizeText(v))
+        .filter(Boolean);
 
       let score = 0;
 
-      if (normalizedSigungu === `${areaName}시`) score = 10;
-      else if (normalizedSigungu === `${areaName}군`) score = 10;
-      else if (normalizedSigungu === `${areaName}구`) score = 10;
-      else if (normalizedSigungu.includes(areaName)) score = 9;
-      else if (normalizedAddress.includes(`${areaName}시`)) score = 8;
-      else if (normalizedAddress.includes(`${areaName}군`)) score = 8;
-      else if (normalizedAddress.includes(`${areaName}구`)) score = 8;
-      else if (normalizedAddress.includes(areaName)) score = 7;
-      else if (normalizedAddress.includes(String(row.station_name || "").trim())) score = 4;
-      else if (normalizedAddress.includes(String(row.station_label || "").replace("경찰서", "").trim())) score = 3;
+      areaTokens.forEach((token) => {
+        if (!token) return;
+        if (normalizedSigungu === token) score = Math.max(score, 12);
+        else if (normalizedSigungu.includes(token)) score = Math.max(score, 11);
+        else if (normalizedAddress.includes(token)) score = Math.max(score, 9);
+      });
+
+      if (normalizedAddress.includes(normalizeText(stationName))) score = Math.max(score, 5);
+      if (normalizedAddress.includes(normalizeText(stationLabel))) score = Math.max(score, 5);
 
       if (score > 0) {
         candidates.push({ row, score });
@@ -434,6 +682,8 @@ document.addEventListener("DOMContentLoaded", function () {
       );
       currentMap.setCenter(center, 10);
     }
+
+    applySubmitLockState();
   }
 
   async function fetchStations() {
@@ -542,10 +792,11 @@ document.addEventListener("DOMContentLoaded", function () {
   async function initVworldMap() {
     try {
       if (submitSectionDesc) {
-        submitSectionDesc.textContent = "입력 내용을 확인한 뒤 신청서 제출 버튼을 누르면 실제로 접수됩니다.";
+        submitSectionDesc.textContent = "입력 내용을 확인한 뒤 신청서 제출 버튼을 누르면 실제로 접수됩니다. 접수 후에는 확인 팝업이 표시되고, 잠시 동안 중복 제출이 차단됩니다.";
       }
 
       setResultMessage("신청서를 작성한 뒤 신청서 제출 버튼을 누르면 실제로 접수됩니다.");
+      applySubmitLockState();
       setLocationMessage("주소 검색 후 지도를 클릭하면 최종 위치가 선택됩니다.");
 
       try {
@@ -756,7 +1007,58 @@ document.addEventListener("DOMContentLoaded", function () {
       if (submitBtn) {
         submitBtn.addEventListener("click", async function () {
           if (isSubmitting) {
-            alert("이미 제출 중입니다. 잠시만 기다려주세요.");
+            await showModal({
+              title: "이미 제출 처리 중입니다.",
+              body: `
+                <div style="line-height:1.9;color:#334155;">
+                  현재 신청 내용을 저장하고 있습니다.<br>
+                  잠시만 기다려주세요. 버튼을 다시 누르실 필요는 없습니다.
+                </div>
+              `,
+              buttonText: "확인"
+            });
+            return;
+          }
+
+          const activeLock = getActiveSubmitLock();
+          if (activeLock?.state === "pending") {
+            setResultMessage(`
+              <div style="padding:16px;border:1px solid #dbeafe;border-radius:12px;background:#f8fbff;color:#1e3a8a;line-height:1.8;">
+                <b>현재 신청 내용을 저장하고 있습니다.</b><br>
+                중복 제출 방지를 위해 잠시 동안 추가 클릭이 제한됩니다.
+              </div>
+            `);
+            await showModal({
+              title: "제출 처리 중입니다.",
+              body: `
+                <div style="line-height:1.9;color:#334155;">
+                  현재 신청 내용을 저장하고 있습니다.<br>
+                  중복 제출 방지를 위해 잠시 후 다시 확인해주세요.
+                </div>
+              `,
+              buttonText: "확인"
+            });
+            return;
+          }
+
+          if (activeLock?.state === "success") {
+            setResultMessage(`
+              <div style="padding:16px;border:1px solid #ccead5;border-radius:12px;background:#f0fdf4;color:#166534;line-height:1.8;">
+                <b>방금 신청이 정상 접수되었습니다.</b><br>
+                중복 제출 방지를 위해 잠시 동안 재제출이 제한됩니다.
+              </div>
+            `);
+            await showModal({
+              title: "방금 신청이 정상 접수되었습니다.",
+              body: `
+                <div style="line-height:1.9;color:#334155;">
+                  같은 내용이 여러 번 저장되지 않도록 잠시 동안 재제출이 제한됩니다.<br>
+                  새로운 신청이 필요하면 잠시 후 다시 진행해주세요.
+                </div>
+              `,
+              buttonText: "확인",
+              tone: "success"
+            });
             return;
           }
 
@@ -776,7 +1078,8 @@ document.addEventListener("DOMContentLoaded", function () {
           }
 
           isSubmitting = true;
-          setSubmitPending(true);
+          writeSubmitLock("pending");
+          setSubmitState("pending");
 
           try {
             const ownerName = document.getElementById("ownerName")?.value.trim() || "";
@@ -797,9 +1100,12 @@ document.addEventListener("DOMContentLoaded", function () {
             const securityCompany = getRadioValue("securityCompany");
             const hasBell = getRadioValue("hasBell");
 
+            const officialAddressForSave = (selectedOfficialAddress || selectedAddressInput.value || "").trim();
+            const sigunguForStation = (selectedSigungu || extractSigunguFromRefined({ text: officialAddressForSave, structure: {} }) || "").trim();
+
             const matchedStation = inferStationByAddress(
-              selectedOfficialAddress || selectedAddressInput.value,
-              selectedSigungu
+              officialAddressForSave,
+              sigunguForStation
             );
 
             const payload = {
@@ -809,7 +1115,7 @@ document.addEventListener("DOMContentLoaded", function () {
               business_type_other: businessType === "기타" ? (businessTypeEtc || null) : null,
               phone: formatPhoneNumber(phone),
               email: null,
-              address_road: selectedOfficialAddress || selectedAddressInput.value,
+              address_road: officialAddressForSave,
               address_jibun: null,
               address_detail: detailAddress || null,
               latitude: Number(selectedLat.toFixed(7)),
@@ -841,23 +1147,19 @@ document.addEventListener("DOMContentLoaded", function () {
                 : businessType;
 
             const fullAddress = detailAddress
-              ? `${selectedOfficialAddress || selectedAddressInput.value}, ${detailAddress}`
-              : (selectedOfficialAddress || selectedAddressInput.value);
-
-            alert("신청서가 정상 접수되었습니다.");
-
-            resetApplicationForm();
+              ? `${officialAddressForSave}, ${detailAddress}`
+              : officialAddressForSave;
 
             setResultMessage(`
-              <div style="padding:20px;border:1px solid #cfe0ff;border-radius:16px;background:#f8fbff;">
+              <div style="padding:20px;border:1px solid #ccead5;border-radius:16px;background:#f0fdf4;">
                 <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-                  <div style="width:36px;height:36px;border-radius:999px;background:#e8f0ff;display:flex;align-items:center;justify-content:center;font-size:18px;">✓</div>
-                  <div style="font-size:20px;font-weight:800;color:#1d4ed8;">신청서가 정상 접수되었습니다.</div>
+                  <div style="width:36px;height:36px;border-radius:999px;background:#dcfce7;display:flex;align-items:center;justify-content:center;font-size:18px;">✓</div>
+                  <div style="font-size:20px;font-weight:800;color:#166534;">신청이 정상적으로 접수되었습니다.</div>
                 </div>
 
                 <div style="font-size:14px;line-height:1.8;color:#475569;margin-bottom:14px;">
                   입력하신 신청 내용이 시스템에 정상 저장되었습니다.<br>
-                  신청 이후 관할 경찰서 CPO가 접수 내용을 검토할 예정입니다.
+                  관할 경찰서 CPO가 접수 내용을 확인한 뒤 검토를 진행할 예정입니다.
                 </div>
 
                 <div style="border:1px solid #e5e7eb;border-radius:12px;background:#ffffff;padding:6px 14px;margin-bottom:16px;">
@@ -875,7 +1177,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 <div style="padding:14px 16px;border-radius:12px;background:#eef4ff;border:1px solid #d7e5ff;color:#1f3b63;line-height:1.8;font-size:14px;">
                   <b>안내사항</b><br>
-                  1. 신청 이후 관할 경찰서 CPO가 접수 내용을 검토할 예정입니다.<br>
+                  1. 신청 내용은 관할 경찰서로 전달됩니다.<br>
                   2. 필요 시 사업자등록증, 매출현황 증빙자료 등 추가 서류 제출을 요청할 수 있습니다.<br>
                   3. 필요 시 현장 확인 또는 연락이 진행될 수 있습니다.<br>
                   4. 최종 선정 결과는 개별 연락드릴 예정입니다.
@@ -883,20 +1185,61 @@ document.addEventListener("DOMContentLoaded", function () {
               </div>
             `);
 
+            writeSubmitLock("success");
+            setSubmitState("success-lock");
+            clearSubmitCooldownTimer();
+            submitCooldownTimer = setTimeout(() => {
+              clearSubmitLock();
+              setSubmitState("idle");
+            }, SUBMIT_SUCCESS_COOLDOWN_MS);
+
+            await showModal({
+              title: "신청이 정상적으로 접수되었습니다.",
+              body: `
+                <div style="line-height:1.9;color:#334155;">
+                  입력하신 신청 내용은 시스템에 정상 저장되었습니다.<br>
+                  신청 내용은 관할 경찰서로 전달되며, 필요 시 추가 서류 제출을 요청할 수 있습니다.<br>
+                  확인을 누르면 입력 화면이 초기화됩니다.
+                </div>
+              `,
+              buttonText: "확인",
+              tone: "success"
+            });
+
+            resetApplicationForm();
+
             if (resultBox) {
               resultBox.scrollIntoView({ behavior: "smooth", block: "center" });
             }
           } catch (error) {
             console.error(error);
+            clearSubmitLock();
+            setSubmitState("idle");
+
             setResultMessage(`
               <div style="padding:16px;border:1px solid #fecaca;border-radius:12px;background:#fff1f2;color:#991b1b;line-height:1.8;">
                 <b>신청 저장 중 오류가 발생했습니다.</b><br>
                 ${escapeHtml(error.message || "알 수 없는 오류")}
               </div>
             `);
+
+            await showModal({
+              title: "신청 저장 중 오류가 발생했습니다.",
+              body: `
+                <div style="line-height:1.9;color:#334155;">
+                  신청 내용을 저장하는 중 오류가 발생했습니다.<br>
+                  같은 내용이 중복 저장되지 않도록 자동으로 확인한 뒤 다시 시도해주세요.<br><br>
+                  <div style="padding:12px 14px;border:1px solid #fecaca;border-radius:12px;background:#fff1f2;color:#991b1b;">
+                    ${escapeHtml(error.message || "알 수 없는 오류")}
+                  </div>
+                </div>
+              `,
+              buttonText: "확인",
+              tone: "error"
+            });
           } finally {
             isSubmitting = false;
-            setSubmitPending(false);
+            applySubmitLockState();
           }
         });
       }
@@ -905,6 +1248,16 @@ document.addEventListener("DOMContentLoaded", function () {
       setResultMessage("오류: " + error.message);
     }
   }
+
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) {
+      applySubmitLockState();
+    }
+  });
+
+  window.addEventListener("pageshow", function () {
+    applySubmitLockState();
+  });
 
   initVworldMap();
 });
