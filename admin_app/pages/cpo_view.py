@@ -324,7 +324,6 @@ def _extract_selected_indexes(event: Any) -> List[int]:
         selection = getattr(event, "selection", None)
         if selection is None and isinstance(event, dict):
             selection = event.get("selection")
-
         if selection is None:
             return []
 
@@ -379,13 +378,13 @@ def _render_map(rows: List[Dict[str, Any]], selected_row: Optional[Dict[str, Any
             f"총점: {_safe_int(row.get('total_score'), 0)}점"
         )
         tooltip = f"{_safe_str(row.get('business_name'))} / {_status_label(row.get('current_status'))}"
-        icon = "red" if selected_row and row.get("application_id") == selected_row.get("application_id") else "blue"
+        icon_color = "red" if selected_row and row.get("application_id") == selected_row.get("application_id") else "blue"
 
         folium.Marker(
             [lat, lon],
             tooltip=tooltip,
             popup=folium.Popup(popup_html, max_width=300),
-            icon=folium.Icon(color=icon),
+            icon=folium.Icon(color=icon_color),
         ).add_to(cluster)
 
     if selected_row and _safe_float(selected_row.get("latitude"), 0) and _safe_float(selected_row.get("longitude"), 0):
@@ -400,7 +399,7 @@ def _render_map(rows: List[Dict[str, Any]], selected_row: Optional[Dict[str, Any
 
 
 def _render_score_guide():
-    with st.expander("우선순위 산정 기준 보기", expanded=False):
+    with st.expander("우선순위 현황", expanded=True):
         st.markdown(
             """
 **우선순위는 아래 항목을 합산하여 산정합니다.**
@@ -545,7 +544,7 @@ def _update_application(
     station_label = _safe_str(payload.pop("station_label", ""))
     if station_label:
         payload["station_id"] = station_map.get(station_label)
-    elif "station_label" in payload:
+    else:
         payload["station_id"] = None
 
     supabase.table("applications").update(payload).eq("id", application_id).execute()
@@ -815,7 +814,6 @@ def _render_detail(
 
 
 def _render_priority_table(rows: List[Dict[str, Any]]):
-    st.markdown("### 우선순위 현황")
     c1, c2 = st.columns([2, 2])
     with c1:
         hide_excluded = st.checkbox("제외 건 숨기기", value=True, key="priority_hide_excluded")
@@ -908,6 +906,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
 
     _render_top_metrics(filtered_rows)
     _render_score_guide()
+    _render_priority_table(filtered_rows)
 
     st.markdown("### 접수 목록 현황")
     _render_list_table(filtered_rows)
@@ -923,6 +922,8 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         )
 
     st.markdown("### 접수 현황 지도")
+    selected_row = _selected_row(filtered_rows)
+
     if filtered_rows:
         _sync_selected_row_by_selectbox(filtered_rows)
         selected_row = _selected_row(filtered_rows)
@@ -939,7 +940,6 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         with n3:
             st.caption("접수 목록이나 선택 점포를 바꾸면 지도와 아래 상세정보가 함께 바뀝니다.")
 
-        selected_row = _selected_row(filtered_rows)
         _render_map(filtered_rows, selected_row)
 
         if selected_row:
@@ -949,7 +949,6 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
                 f"경도 {_format_coord(selected_row.get('longitude'))}"
             )
     else:
-        selected_row = None
         st.info("조회 결과가 없습니다.")
 
     if not filtered_rows or not selected_row:
@@ -963,26 +962,3 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
             station_map=station_map,
             station_options=station_label_options,
         )
-
-        with st.expander("다른 접수 건 빠르게 보기", expanded=False):
-            for row in filtered_rows:
-                submitted_text = _format_submitted_text(row.get("submitted_at"))
-                header = (
-                    f"{_safe_str(row.get('business_name'))} | {_display_business_type(row)} | {submitted_text} | "
-                    f"총점 {_safe_int(row.get('total_score'), 0)} | {_status_label(row.get('current_status'))}"
-                )
-                with st.container(border=True):
-                    c1, c2 = st.columns([4, 1])
-                    with c1:
-                        st.markdown(f"**{header}**")
-                        st.caption(
-                            f"신청인 {_safe_str(row.get('applicant_name')) or '-'} / "
-                            f"경찰서 {_safe_str(row.get('station_label')) or '-'} / "
-                            f"주소 {_full_address(row)}"
-                        )
-                    with c2:
-                        if st.button("선택", key=f"quick_select_{row.get('application_id')}", use_container_width=True):
-                            _set_selected_application(row)
-                            st.rerun()
-
-    _render_priority_table(filtered_rows)
