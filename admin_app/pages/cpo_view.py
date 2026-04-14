@@ -31,6 +31,16 @@ CPO_RISK_OPTIONS = {
 
 REVIEW_STATUS_OPTIONS = ["검토완료", "추가서류요청", "선정", "제외"]
 JEONNAM_CENTER = [34.8679, 126.9910]
+COMMON_BUSINESS_TYPES = ["", "편의점", "음식점", "카페", "주점", "미용실", "소매점", "기타"]
+COMMON_SALES_BANDS = [
+    "",
+    "1천만원 이하",
+    "1천만원 초과 ~ 3천만원 이하",
+    "3천만원 초과 ~ 5천만원 이하",
+    "5천만원 초과 ~ 1억원 이하",
+    "1억원 초과 ~ 2억원 이하",
+    "2억원 초과",
+]
 
 
 def _safe_str(v: Any) -> str:
@@ -127,6 +137,21 @@ def _fetch_rows(supabase) -> List[Dict[str, Any]]:
     except Exception as exc:
         st.error(f"v_admin_applications 조회 실패: {exc}")
         return []
+
+
+def _fetch_station_map(supabase) -> Dict[str, Any]:
+    try:
+        resp = (
+            supabase.table("stations")
+            .select("id, station_label")
+            .eq("is_active", True)
+            .order("id", desc=False)
+            .execute()
+        )
+        rows = resp.data or []
+        return {_safe_str(row.get("station_label")): row.get("id") for row in rows if _safe_str(row.get("station_label"))}
+    except Exception:
+        return {}
 
 
 def _apply_filters(
@@ -294,6 +319,26 @@ def _sync_selected_row_by_selectbox(rows: List[Dict[str, Any]]):
     st.session_state["selected_application_id"] = selected_id
 
 
+def _extract_selected_indexes(event: Any) -> List[int]:
+    try:
+        selection = getattr(event, "selection", None)
+        if selection is None and isinstance(event, dict):
+            selection = event.get("selection")
+
+        if selection is None:
+            return []
+
+        rows = getattr(selection, "rows", None)
+        if rows is not None:
+            return list(rows)
+
+        if isinstance(selection, dict):
+            return list(selection.get("rows", []) or [])
+    except Exception:
+        return []
+    return []
+
+
 def _render_map(rows: List[Dict[str, Any]], selected_row: Optional[Dict[str, Any]]):
     import folium
     from folium.plugins import MarkerCluster
@@ -407,10 +452,50 @@ def _build_list_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
 
 
 def _render_list_table(rows: List[Dict[str, Any]]):
-    if rows:
-        st.dataframe(_build_list_df(rows), use_container_width=True, hide_index=True)
-    else:
+    if not rows:
         st.info("조회 결과가 없습니다.")
+        st.session_state.pop("selected_application_id", None)
+        return
+
+    df = _build_list_df(rows)
+    selected_indexes: List[int] = []
+
+    try:
+        event = st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="applications_table",
+        )
+        selected_indexes = _extract_selected_indexes(event)
+    except TypeError:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        fallback_index = 0
+        current_id = st.session_state.get("selected_application_id")
+        if current_id is not None:
+            for idx, row in enumerate(rows):
+                if row.get("application_id") == current_id:
+                    fallback_index = idx
+                    break
+
+        picked_index = st.selectbox(
+            "상세정보로 볼 접수 선택",
+            options=list(range(len(rows))),
+            index=fallback_index,
+            format_func=lambda i: f"{_safe_str(rows[i].get('business_name'))} | {_safe_str(rows[i].get('applicant_name'))} | {_format_submitted_text(rows[i].get('submitted_at'))}",
+            key="applications_table_fallback_selectbox",
+        )
+        _set_selected_application(rows[picked_index])
+        return
+
+    if selected_indexes:
+        picked_index = selected_indexes[0]
+        if 0 <= picked_index < len(rows):
+            _set_selected_application(rows[picked_index])
+    elif st.session_state.get("selected_application_id") is None:
+        _set_selected_application(rows[0])
 
 
 def _save_review(
@@ -448,6 +533,31 @@ def _save_review(
     supabase.table("applications").update({"status": review_result}).eq("id", application_id).execute()
 
 
+def _update_application(
+    supabase,
+    application_id: Any,
+    station_map: Dict[str, Any],
+    payload: Dict[str, Any],
+):
+    if not application_id:
+        raise Exception("application_id가 없습니다.")
+
+    station_label = _safe_str(payload.pop("station_label", ""))
+    if station_label:
+        payload["station_id"] = station_map.get(station_label)
+    elif "station_label" in payload:
+        payload["station_id"] = None
+
+    supabase.table("applications").update(payload).eq("id", application_id).execute()
+
+
+def _delete_application(supabase, application_id: Any):
+    if not application_id:
+        raise Exception("application_id가 없습니다.")
+    supabase.table("cpo_reviews").delete().eq("application_id", application_id).execute()
+    supabase.table("applications").delete().eq("id", application_id).execute()
+
+
 def _render_detail_summary_cards(row: Dict[str, Any]):
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("현재 상태", _status_label(row.get("current_status")) or "-")
@@ -456,7 +566,141 @@ def _render_detail_summary_cards(row: Dict[str, Any]):
     c4.metric("총점", f"{_safe_int(row.get('total_score'), 0)}점")
 
 
-def _render_detail(row: Dict[str, Any], supabase, user_id: str, station_id: Any):
+def _render_application_edit_section(
+    row: Dict[str, Any],
+    supabase,
+    station_map: Dict[str, Any],
+    station_options: List[str],
+):
+    application_id = row.get("application_id")
+
+    st.markdown("#### 접수 정보 수정 / 삭제")
+    st.caption("기본 접수정보를 수정하거나, 잘못 등록된 접수건은 삭제할 수 있습니다.")
+
+    current_business_type = _safe_str(row.get("business_type"))
+    business_type_options = COMMON_BUSINESS_TYPES.copy()
+    if current_business_type and current_business_type not in business_type_options:
+        business_type_options.append(current_business_type)
+
+    current_sales_band = _safe_str(row.get("sales_band"))
+    sales_band_options = COMMON_SALES_BANDS.copy()
+    if current_sales_band and current_sales_band not in sales_band_options:
+        sales_band_options.append(current_sales_band)
+
+    current_station_label = _safe_str(row.get("station_label"))
+    station_label_options = [""] + [label for label in station_options if label]
+    if current_station_label and current_station_label not in station_label_options:
+        station_label_options.append(current_station_label)
+
+    with st.form(f"application_edit_form_{application_id}"):
+        c1, c2 = st.columns(2)
+        with c1:
+            applicant_name = st.text_input("신청인", value=_safe_str(row.get("applicant_name")))
+            business_name = st.text_input("점포명", value=_safe_str(row.get("business_name")))
+            phone = st.text_input("연락처", value=_safe_str(row.get("phone")))
+            business_type = st.selectbox(
+                "업종",
+                business_type_options,
+                index=business_type_options.index(current_business_type) if current_business_type in business_type_options else 0,
+            )
+            business_type_other = st.text_input("기타 업종", value=_safe_str(row.get("business_type_other")))
+            annual_sales = st.number_input(
+                "연매출",
+                min_value=0,
+                value=_safe_int(row.get("annual_sales"), 0),
+                step=100000,
+            )
+            sales_band = st.selectbox(
+                "연매출 구간",
+                sales_band_options,
+                index=sales_band_options.index(current_sales_band) if current_sales_band in sales_band_options else 0,
+            )
+
+        with c2:
+            station_label = st.selectbox(
+                "관할 경찰서",
+                station_label_options,
+                index=station_label_options.index(current_station_label) if current_station_label in station_label_options else 0,
+            )
+            address_road = st.text_input("주소", value=_safe_str(row.get("address_road")))
+            address_detail = st.text_input("상세주소", value=_safe_str(row.get("address_detail")))
+            latitude = st.number_input(
+                "위도",
+                value=_safe_float(row.get("latitude"), 0.0),
+                format="%.6f",
+            )
+            longitude = st.number_input(
+                "경도",
+                value=_safe_float(row.get("longitude"), 0.0),
+                format="%.6f",
+            )
+            has_cctv = st.checkbox("점포 내 CCTV 있음", value=bool(row.get("has_cctv")))
+            has_emergency_bell = st.checkbox("비상벨 설치됨", value=bool(row.get("has_emergency_bell")))
+            uses_security_company = st.checkbox("사설경비 이용 중", value=bool(row.get("uses_security_company")))
+            other_security = st.text_input("기타 방범시설", value=_safe_str(row.get("other_security")))
+
+        save_btn = st.form_submit_button("상세정보 수정 저장", use_container_width=True)
+
+        if save_btn:
+            try:
+                update_payload = {
+                    "applicant_name": _safe_str(applicant_name),
+                    "business_name": _safe_str(business_name),
+                    "phone": _safe_str(phone),
+                    "business_type": _safe_str(business_type) or None,
+                    "business_type_other": _safe_str(business_type_other) or None,
+                    "annual_sales": int(annual_sales),
+                    "sales_band": _safe_str(sales_band) or None,
+                    "address_road": _safe_str(address_road) or None,
+                    "address_detail": _safe_str(address_detail) or None,
+                    "latitude": float(latitude),
+                    "longitude": float(longitude),
+                    "has_cctv": bool(has_cctv),
+                    "has_emergency_bell": bool(has_emergency_bell),
+                    "uses_security_company": bool(uses_security_company),
+                    "other_security": _safe_str(other_security) or None,
+                    "station_label": _safe_str(station_label),
+                }
+                _update_application(
+                    supabase=supabase,
+                    application_id=application_id,
+                    station_map=station_map,
+                    payload=update_payload,
+                )
+                st.success("상세정보가 수정되었습니다.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"상세정보 수정 실패: {exc}")
+
+    with st.expander("접수건 삭제", expanded=False):
+        st.warning("삭제하면 해당 접수건과 관련 검토 이력이 함께 삭제됩니다.")
+        delete_confirm_text = st.text_input(
+            "삭제 확인 문구 입력",
+            value="",
+            placeholder="삭제",
+            key=f"delete_confirm_text_{application_id}",
+        )
+        if st.button("접수건 삭제 실행", key=f"delete_application_btn_{application_id}", use_container_width=True):
+            if delete_confirm_text != "삭제":
+                st.error("삭제하려면 확인 문구에 '삭제'를 정확히 입력해주세요.")
+            else:
+                try:
+                    _delete_application(supabase, application_id)
+                    st.session_state.pop("selected_application_id", None)
+                    st.success("접수건이 삭제되었습니다.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"삭제 실패: {exc}")
+
+
+def _render_detail(
+    row: Dict[str, Any],
+    supabase,
+    user_id: str,
+    station_id: Any,
+    station_map: Dict[str, Any],
+    station_options: List[str],
+):
     st.markdown("### 점포 상세정보")
     _render_detail_summary_cards(row)
 
@@ -478,7 +722,6 @@ def _render_detail(row: Dict[str, Any], supabase, user_id: str, station_id: Any)
 
     st.markdown("#### 위치 정보")
     st.write(f"**주소**: {_full_address(row)}")
-    st.caption("상세정보 안 지도는 제거했습니다. 위치 확인은 상단 '접수 현황 지도'와 '📍 지도에서 보기' 버튼으로 진행합니다.")
 
     st.markdown("#### 설문 응답")
     s1, s2 = st.columns(2)
@@ -503,6 +746,13 @@ def _render_detail(row: Dict[str, Any], supabase, user_id: str, station_id: Any)
     a2.metric("보안취약도", f"{_safe_int(row.get('security_vulnerability_score'), 0)}점")
     a3.metric("CPO위험도", f"{_safe_int(row.get('cpo_risk_score'), 0)}점")
     a4.metric("현재 총점", f"{_safe_int(row.get('total_score'), 0)}점")
+
+    _render_application_edit_section(
+        row=row,
+        supabase=supabase,
+        station_map=station_map,
+        station_options=station_options,
+    )
 
     st.markdown("#### CPO 검토 입력")
     st.caption("검토 결과를 저장하면 cpo_reviews에 이력이 쌓이고, applications의 현재 상태도 함께 변경됩니다.")
@@ -621,6 +871,8 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     selected_station = _safe_str(station)
     user_id = _safe_str(st.session_state.get("uid"))
     station_id = st.session_state.get("station_id")
+    station_map = _fetch_station_map(supabase)
+    station_label_options = station_options or list(station_map.keys())
 
     st.title("전남경찰청 CPO 관리시스템")
 
@@ -657,33 +909,6 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     _render_top_metrics(filtered_rows)
     _render_score_guide()
 
-    st.markdown("### 접수 현황 지도")
-    if filtered_rows:
-        _sync_selected_row_by_selectbox(filtered_rows)
-
-        n1, n2, n3 = st.columns([1, 1, 3])
-        with n1:
-            if st.button("이전 점포", use_container_width=True):
-                _move_selected_by_step(filtered_rows, -1)
-                st.rerun()
-        with n2:
-            if st.button("다음 점포", use_container_width=True):
-                _move_selected_by_step(filtered_rows, 1)
-                st.rerun()
-        with n3:
-            st.caption("선택 점포를 바꾸면 지도 중심과 아래 상세정보가 함께 바뀝니다.")
-
-    selected_row = _selected_row(filtered_rows)
-    _render_map(filtered_rows, selected_row)
-
-    if selected_row:
-        st.caption(
-            f"현재 선택: {_safe_str(selected_row.get('business_name'))} / "
-            f"{_safe_str(selected_row.get('station_label')) or '-'} / "
-            f"위도 {_format_coord(selected_row.get('latitude'))} / "
-            f"경도 {_format_coord(selected_row.get('longitude'))}"
-        )
-
     st.markdown("### 접수 목록 현황")
     _render_list_table(filtered_rows)
 
@@ -697,22 +922,47 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
             use_container_width=True,
         )
 
-    st.markdown("### 접수 상세 / 지도 이동")
-    if not filtered_rows or not selected_row:
-        st.info("조회 결과가 없습니다.")
-    else:
-        b1, b2 = st.columns([1, 3])
-        with b1:
-            if st.button("📍 지도에서 보기", key=f"move_map_selected_{selected_row.get('application_id')}", use_container_width=True):
-                _set_selected_application(selected_row)
+    st.markdown("### 접수 현황 지도")
+    if filtered_rows:
+        _sync_selected_row_by_selectbox(filtered_rows)
+        selected_row = _selected_row(filtered_rows)
+
+        n1, n2, n3 = st.columns([1, 1, 3])
+        with n1:
+            if st.button("이전 점포", use_container_width=True):
+                _move_selected_by_step(filtered_rows, -1)
                 st.rerun()
-        with b2:
+        with n2:
+            if st.button("다음 점포", use_container_width=True):
+                _move_selected_by_step(filtered_rows, 1)
+                st.rerun()
+        with n3:
+            st.caption("접수 목록이나 선택 점포를 바꾸면 지도와 아래 상세정보가 함께 바뀝니다.")
+
+        selected_row = _selected_row(filtered_rows)
+        _render_map(filtered_rows, selected_row)
+
+        if selected_row:
             st.caption(
-                f"주소: {_full_address(selected_row)} / 위도 {_format_coord(selected_row.get('latitude'))} / "
+                f"현재 선택: {_safe_str(selected_row.get('business_name'))} / "
+                f"위도 {_format_coord(selected_row.get('latitude'))} / "
                 f"경도 {_format_coord(selected_row.get('longitude'))}"
             )
+    else:
+        selected_row = None
+        st.info("조회 결과가 없습니다.")
 
-        _render_detail(selected_row, supabase, user_id, station_id)
+    if not filtered_rows or not selected_row:
+        st.info("상세정보를 표시할 접수 건이 없습니다.")
+    else:
+        _render_detail(
+            row=selected_row,
+            supabase=supabase,
+            user_id=user_id,
+            station_id=station_id,
+            station_map=station_map,
+            station_options=station_label_options,
+        )
 
         with st.expander("다른 접수 건 빠르게 보기", expanded=False):
             for row in filtered_rows:
