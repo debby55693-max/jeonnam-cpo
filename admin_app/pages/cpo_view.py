@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from io import BytesIO
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
+import requests
 import streamlit as st
 
 
@@ -338,6 +339,72 @@ def _extract_selected_indexes(event: Any) -> List[int]:
     return []
 
 
+def _get_vworld_api_key() -> str:
+    if "VWORLD_API_KEY" in st.secrets:
+        return _safe_str(st.secrets["VWORLD_API_KEY"])
+    if "vworld_api_key" in st.secrets:
+        return _safe_str(st.secrets["vworld_api_key"])
+    return ""
+
+
+def _geocode_address_vworld(address: str) -> Tuple[Optional[float], Optional[float], str]:
+    query = _safe_str(address)
+    if not query:
+        return None, None, ""
+
+    api_key = _get_vworld_api_key()
+    if not api_key:
+        raise Exception("VWORLD_API_KEY가 st.secrets에 없습니다.")
+
+    def _request(addr_type: str) -> Dict[str, Any]:
+        url = "https://api.vworld.kr/req/address"
+        params = {
+            "service": "address",
+            "request": "getcoord",
+            "version": "2.0",
+            "crs": "epsg:4326",
+            "address": query,
+            "refine": "true",
+            "simple": "false",
+            "format": "json",
+            "errorformat": "json",
+            "type": addr_type,
+            "key": api_key,
+        }
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
+    def _parse(data: Dict[str, Any]) -> Tuple[Optional[float], Optional[float], str]:
+        response = data.get("response") or {}
+        if response.get("status") != "OK":
+            return None, None, ""
+
+        result = response.get("result") or {}
+        point = result.get("point") or {}
+        refined = response.get("refined") or {}
+
+        x = point.get("x")
+        y = point.get("y")
+
+        try:
+            lon = float(x)
+            lat = float(y)
+        except Exception:
+            return None, None, ""
+
+        official_address = _safe_str(refined.get("text")) or query
+        return lat, lon, official_address
+
+    for addr_type in ["road", "parcel"]:
+        data = _request(addr_type)
+        lat, lon, official_address = _parse(data)
+        if lat is not None and lon is not None:
+            return lat, lon, official_address
+
+    raise Exception("입력한 주소로 좌표를 찾지 못했습니다.")
+
+
 def _render_map(rows: List[Dict[str, Any]], selected_row: Optional[Dict[str, Any]]):
     import folium
     from folium.plugins import MarkerCluster
@@ -413,6 +480,45 @@ def _render_score_guide():
 ※ 최종 지원 여부는 검토의견과 현장 상황을 함께 반영하여 결정합니다.
 """
         )
+
+
+def _render_priority_table(rows: List[Dict[str, Any]]):
+    c1, c2 = st.columns([2, 2])
+    with c1:
+        hide_excluded = st.checkbox("제외 건 숨기기", value=True, key="priority_hide_excluded")
+    with c2:
+        top_n = st.number_input("상위 순위만 보기", min_value=1, max_value=500, value=20, step=1)
+
+    filtered = []
+    for row in rows:
+        if hide_excluded and _status_label(row.get("current_status")) == "제외":
+            continue
+        filtered.append(row)
+
+    filtered.sort(key=lambda x: _safe_int(x.get("total_score"), 0), reverse=True)
+    filtered = filtered[:top_n]
+
+    table_rows = []
+    for idx, row in enumerate(filtered, start=1):
+        table_rows.append(
+            {
+                "순위": idx,
+                "점포명": _safe_str(row.get("business_name")),
+                "신청인": _safe_str(row.get("applicant_name")),
+                "경찰서": _safe_str(row.get("station_label")),
+                "업종": _display_business_type(row),
+                "체감안전도": _safe_int(row.get("felt_safety_score"), 0),
+                "CPO위험도": _safe_int(row.get("cpo_risk_score"), 0),
+                "보안취약도": _safe_int(row.get("security_vulnerability_score"), 0),
+                "총점": _safe_int(row.get("total_score"), 0),
+                "상태": _status_label(row.get("current_status")),
+            }
+        )
+
+    if table_rows:
+        st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("우선순위 데이터가 없습니다.")
 
 
 def _render_top_metrics(rows: List[Dict[str, Any]]):
@@ -574,7 +680,7 @@ def _render_application_edit_section(
     application_id = row.get("application_id")
 
     st.markdown("#### 접수 정보 수정 / 삭제")
-    st.caption("기본 접수정보를 수정하거나, 잘못 등록된 접수건은 삭제할 수 있습니다.")
+    st.caption("주소를 수정해서 저장하면 해당 주소 기준으로 위도·경도를 다시 찾고 지도 위치도 함께 바뀝니다.")
 
     current_business_type = _safe_str(row.get("business_type"))
     business_type_options = COMMON_BUSINESS_TYPES.copy()
@@ -590,6 +696,11 @@ def _render_application_edit_section(
     station_label_options = [""] + [label for label in station_options if label]
     if current_station_label and current_station_label not in station_label_options:
         station_label_options.append(current_station_label)
+
+    original_address_road = _safe_str(row.get("address_road"))
+    original_address_detail = _safe_str(row.get("address_detail"))
+    original_lat = _safe_float(row.get("latitude"), 0.0)
+    original_lon = _safe_float(row.get("longitude"), 0.0)
 
     with st.form(f"application_edit_form_{application_id}"):
         c1, c2 = st.columns(2)
@@ -621,16 +732,16 @@ def _render_application_edit_section(
                 station_label_options,
                 index=station_label_options.index(current_station_label) if current_station_label in station_label_options else 0,
             )
-            address_road = st.text_input("주소", value=_safe_str(row.get("address_road")))
-            address_detail = st.text_input("상세주소", value=_safe_str(row.get("address_detail")))
+            address_road = st.text_input("주소", value=original_address_road)
+            address_detail = st.text_input("상세주소", value=original_address_detail)
             latitude = st.number_input(
                 "위도",
-                value=_safe_float(row.get("latitude"), 0.0),
+                value=original_lat,
                 format="%.6f",
             )
             longitude = st.number_input(
                 "경도",
-                value=_safe_float(row.get("longitude"), 0.0),
+                value=original_lon,
                 format="%.6f",
             )
             has_cctv = st.checkbox("점포 내 CCTV 있음", value=bool(row.get("has_cctv")))
@@ -642,6 +753,27 @@ def _render_application_edit_section(
 
         if save_btn:
             try:
+                address_road_clean = _safe_str(address_road)
+                address_detail_clean = _safe_str(address_detail)
+
+                lat_to_save = float(latitude)
+                lon_to_save = float(longitude)
+
+                address_changed = (
+                    address_road_clean != original_address_road
+                    or address_detail_clean != original_address_detail
+                )
+
+                official_address_for_save = address_road_clean
+
+                if address_changed and address_road_clean:
+                    new_lat, new_lon, official_address = _geocode_address_vworld(address_road_clean)
+                    if new_lat is None or new_lon is None:
+                        raise Exception("수정한 주소로 좌표를 찾지 못했습니다.")
+                    lat_to_save = float(new_lat)
+                    lon_to_save = float(new_lon)
+                    official_address_for_save = official_address or address_road_clean
+
                 update_payload = {
                     "applicant_name": _safe_str(applicant_name),
                     "business_name": _safe_str(business_name),
@@ -650,23 +782,26 @@ def _render_application_edit_section(
                     "business_type_other": _safe_str(business_type_other) or None,
                     "annual_sales": int(annual_sales),
                     "sales_band": _safe_str(sales_band) or None,
-                    "address_road": _safe_str(address_road) or None,
-                    "address_detail": _safe_str(address_detail) or None,
-                    "latitude": float(latitude),
-                    "longitude": float(longitude),
+                    "address_road": official_address_for_save or None,
+                    "address_detail": address_detail_clean or None,
+                    "latitude": lat_to_save,
+                    "longitude": lon_to_save,
                     "has_cctv": bool(has_cctv),
                     "has_emergency_bell": bool(has_emergency_bell),
                     "uses_security_company": bool(uses_security_company),
                     "other_security": _safe_str(other_security) or None,
                     "station_label": _safe_str(station_label),
                 }
+
                 _update_application(
                     supabase=supabase,
                     application_id=application_id,
                     station_map=station_map,
                     payload=update_payload,
                 )
-                st.success("상세정보가 수정되었습니다.")
+
+                st.session_state["selected_application_id"] = application_id
+                st.success("상세정보가 수정되었습니다. 주소가 변경된 경우 좌표와 지도 위치도 함께 반영되었습니다.")
                 st.rerun()
             except Exception as exc:
                 st.error(f"상세정보 수정 실패: {exc}")
@@ -813,58 +948,6 @@ def _render_detail(
                 st.error(f"저장 실패: {exc}")
 
 
-def _render_priority_table(rows: List[Dict[str, Any]]):
-    c1, c2 = st.columns([2, 2])
-    with c1:
-        hide_excluded = st.checkbox("제외 건 숨기기", value=True, key="priority_hide_excluded")
-    with c2:
-        top_n = st.number_input("상위 순위만 보기", min_value=1, max_value=500, value=20, step=1)
-
-    filtered = []
-    for row in rows:
-        if hide_excluded and _status_label(row.get("current_status")) == "제외":
-            continue
-        filtered.append(row)
-
-    filtered.sort(key=lambda x: _safe_int(x.get("total_score"), 0), reverse=True)
-    filtered = filtered[:top_n]
-
-    table_rows = []
-    for idx, row in enumerate(filtered, start=1):
-        table_rows.append(
-            {
-                "순위": idx,
-                "점포명": _safe_str(row.get("business_name")),
-                "신청인": _safe_str(row.get("applicant_name")),
-                "경찰서": _safe_str(row.get("station_label")),
-                "업종": _display_business_type(row),
-                "체감안전도": _safe_int(row.get("felt_safety_score"), 0),
-                "CPO위험도": _safe_int(row.get("cpo_risk_score"), 0),
-                "보안취약도": _safe_int(row.get("security_vulnerability_score"), 0),
-                "총점": _safe_int(row.get("total_score"), 0),
-                "상태": _status_label(row.get("current_status")),
-            }
-        )
-
-    if table_rows:
-        st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
-    else:
-        st.info("우선순위 데이터가 없습니다.")
-
-
-def _move_selected_by_step(rows: List[Dict[str, Any]], step: int):
-    if not rows:
-        return
-    ids = [row.get("application_id") for row in rows]
-    current_id = st.session_state.get("selected_application_id")
-    if current_id not in ids:
-        st.session_state["selected_application_id"] = ids[0]
-        return
-    idx = ids.index(current_id)
-    next_idx = max(0, min(len(ids) - 1, idx + step))
-    st.session_state["selected_application_id"] = ids[next_idx]
-
-
 def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     selected_station = _safe_str(station)
     user_id = _safe_str(st.session_state.get("uid"))
@@ -931,11 +1014,23 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         n1, n2, n3 = st.columns([1, 1, 3])
         with n1:
             if st.button("이전 점포", use_container_width=True):
-                _move_selected_by_step(filtered_rows, -1)
+                ids = [row.get("application_id") for row in filtered_rows]
+                current_id = st.session_state.get("selected_application_id")
+                if current_id not in ids:
+                    st.session_state["selected_application_id"] = ids[0]
+                else:
+                    idx = ids.index(current_id)
+                    st.session_state["selected_application_id"] = ids[max(0, idx - 1)]
                 st.rerun()
         with n2:
             if st.button("다음 점포", use_container_width=True):
-                _move_selected_by_step(filtered_rows, 1)
+                ids = [row.get("application_id") for row in filtered_rows]
+                current_id = st.session_state.get("selected_application_id")
+                if current_id not in ids:
+                    st.session_state["selected_application_id"] = ids[0]
+                else:
+                    idx = ids.index(current_id)
+                    st.session_state["selected_application_id"] = ids[min(len(ids) - 1, idx + 1)]
                 st.rerun()
         with n3:
             st.caption("접수 목록이나 선택 점포를 바꾸면 지도와 아래 상세정보가 함께 바뀝니다.")
