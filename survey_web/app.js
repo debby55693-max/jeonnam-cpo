@@ -27,6 +27,16 @@ document.addEventListener("DOMContentLoaded", function () {
   let isSubmitting = false;
   let submitCooldownTimer = null;
 
+  const addressSearchState = {
+    keyword: "",
+    page: 1,
+    totalCount: 0,
+    countPerPage: 10,
+    results: [],
+    selectedIndex: -1,
+    isLoading: false,
+  };
+
   const SUBMIT_LOCK_STORAGE_KEY = "jeonnam_security_support_submit_lock";
   const SUBMIT_PENDING_LOCK_MS = 60 * 1000;
   const SUBMIT_SUCCESS_COOLDOWN_MS = 7 * 1000;
@@ -190,6 +200,47 @@ document.addEventListener("DOMContentLoaded", function () {
         <div style="padding:22px;">
           <div id="submitCompleteModalBody" style="font-size:15px;line-height:1.9;color:#334155;"></div>
           <button id="submitCompleteModalConfirm" type="button" style="margin-top:20px;width:100%;height:48px;border:none;border-radius:12px;background:#1f5aa8;color:#ffffff;font-size:16px;font-weight:800;cursor:pointer;">확인</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+    return modal;
+  }
+
+  function ensureAddressSearchModal() {
+    let modal = document.getElementById("addressSearchModal");
+    if (modal) return modal;
+
+    modal = document.createElement("div");
+    modal.id = "addressSearchModal";
+    modal.style.position = "fixed";
+    modal.style.inset = "0";
+    modal.style.background = "rgba(15, 23, 42, 0.45)";
+    modal.style.display = "none";
+    modal.style.alignItems = "center";
+    modal.style.justifyContent = "center";
+    modal.style.padding = "20px";
+    modal.style.zIndex = "99998";
+
+    modal.innerHTML = `
+      <div style="width:100%;max-width:760px;background:#ffffff;border-radius:18px;box-shadow:0 20px 45px rgba(15,23,42,0.22);overflow:hidden;border:1px solid #dbe4f0;">
+        <div style="padding:18px 22px;background:#eef4ff;border-bottom:1px solid #d7e5ff;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+          <div>
+            <div style="font-size:22px;font-weight:800;color:#1d4ed8;">주소 검색 결과</div>
+            <div id="addressSearchModalSubTitle" style="margin-top:4px;font-size:13px;color:#475569;">검색 결과 목록에서 원하는 주소를 선택해주세요.</div>
+          </div>
+          <button id="addressSearchModalCloseTop" type="button" style="border:none;background:#dbeafe;color:#1d4ed8;border-radius:10px;padding:10px 14px;font-size:13px;font-weight:700;cursor:pointer;">닫기</button>
+        </div>
+        <div style="padding:22px;">
+          <div id="addressSearchModalResultList" style="display:flex;flex-direction:column;gap:10px;min-height:180px;"></div>
+          <div id="addressSearchModalEmpty" style="display:none;padding:28px 18px;border:1px dashed #cbd5e1;border-radius:14px;background:#f8fafc;color:#475569;text-align:center;line-height:1.8;">검색 결과가 없습니다.</div>
+          <div style="margin-top:18px;display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap;">
+            <button id="addressPrevPageBtn" type="button" style="height:40px;border:none;border-radius:10px;background:#e2e8f0;color:#334155;padding:0 14px;font-weight:700;cursor:pointer;">이전</button>
+            <div id="addressPageButtons" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+            <button id="addressNextPageBtn" type="button" style="height:40px;border:none;border-radius:10px;background:#e2e8f0;color:#334155;padding:0 14px;font-weight:700;cursor:pointer;">다음</button>
+          </div>
+          <button id="addressSearchModalCloseBottom" type="button" style="margin-top:18px;width:100%;height:48px;border:none;border-radius:12px;background:#1f5aa8;color:#ffffff;font-size:16px;font-weight:800;cursor:pointer;">닫기</button>
         </div>
       </div>
     `;
@@ -458,10 +509,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function extractSigunguFromRefined(refined) {
     const s = refined?.structure || {};
-    const preferred = [
-      s.level2,
-      s.level3
-    ]
+    const preferred = [s.level2, s.level3]
       .map((v) => String(v || "").trim())
       .find(Boolean);
 
@@ -626,6 +674,16 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
+  function resetAddressSearchState() {
+    addressSearchState.keyword = "";
+    addressSearchState.page = 1;
+    addressSearchState.totalCount = 0;
+    addressSearchState.countPerPage = 10;
+    addressSearchState.results = [];
+    addressSearchState.selectedIndex = -1;
+    addressSearchState.isLoading = false;
+  }
+
   function resetApplicationForm() {
     const form = document.querySelector("form");
     if (form) form.reset();
@@ -666,6 +724,7 @@ document.addEventListener("DOMContentLoaded", function () {
     selectedLat = null;
     selectedOfficialAddress = "";
     selectedSigungu = "";
+    resetAddressSearchState();
 
     if (currentMarkerLayer && typeof currentMarkerLayer.clearMarkers === "function") {
       currentMarkerLayer.clearMarkers();
@@ -753,6 +812,237 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     return { ok: true };
+  }
+
+  function createAddressCardHtml(item, index) {
+    const roadAddr = escapeHtml(item.roadAddr || "");
+    const jibunAddr = escapeHtml(item.jibunAddr || "");
+    const zipNo = escapeHtml(item.zipNo || "");
+
+    return `
+      <button type="button" data-address-index="${index}" style="width:100%;text-align:left;border:1px solid #dbe4f0;border-radius:14px;background:#ffffff;padding:16px;cursor:pointer;transition:all .15s ease;">
+        <div style="font-size:15px;font-weight:800;color:#0f172a;line-height:1.7;">${roadAddr}</div>
+        <div style="margin-top:6px;font-size:13px;color:#64748b;line-height:1.7;">지번: ${jibunAddr || "-"}</div>
+        <div style="margin-top:4px;font-size:12px;color:#94a3b8;">우편번호: ${zipNo || "-"}</div>
+      </button>
+    `;
+  }
+
+  function closeAddressSearchModal() {
+    const modal = document.getElementById("addressSearchModal");
+    if (!modal) return;
+    modal.style.display = "none";
+  }
+
+  function bindAddressSearchModalEvents(apiKey, updateSelectedPoint) {
+    const modal = ensureAddressSearchModal();
+    const closeTop = document.getElementById("addressSearchModalCloseTop");
+    const closeBottom = document.getElementById("addressSearchModalCloseBottom");
+    const prevBtn = document.getElementById("addressPrevPageBtn");
+    const nextBtn = document.getElementById("addressNextPageBtn");
+    const listEl = document.getElementById("addressSearchModalResultList");
+
+    if (closeTop) closeTop.onclick = closeAddressSearchModal;
+    if (closeBottom) closeBottom.onclick = closeAddressSearchModal;
+    if (modal) {
+      modal.onclick = function (e) {
+        if (e.target === modal) closeAddressSearchModal();
+      };
+    }
+
+    if (prevBtn) {
+      prevBtn.onclick = async function () {
+        if (addressSearchState.page <= 1 || addressSearchState.isLoading) return;
+        await searchAddressList(addressSearchState.keyword, addressSearchState.page - 1, apiKey, updateSelectedPoint);
+      };
+    }
+
+    if (nextBtn) {
+      nextBtn.onclick = async function () {
+        const totalPages = Math.max(1, Math.ceil(addressSearchState.totalCount / addressSearchState.countPerPage));
+        if (addressSearchState.page >= totalPages || addressSearchState.isLoading) return;
+        await searchAddressList(addressSearchState.keyword, addressSearchState.page + 1, apiKey, updateSelectedPoint);
+      };
+    }
+
+    if (listEl) {
+      listEl.onclick = async function (e) {
+        const button = e.target.closest("[data-address-index]");
+        if (!button) return;
+        const idx = Number(button.getAttribute("data-address-index"));
+        if (!Number.isFinite(idx)) return;
+        const selected = addressSearchState.results[idx];
+        if (!selected) return;
+        try {
+          const coord = await requestVworldCoordByAddress(apiKey, selected.roadAddr || selected.jibunAddr || "");
+          const lon = parseFloat(coord.response.result.point.x);
+          const lat = parseFloat(coord.response.result.point.y);
+          if (Number.isNaN(lon) || Number.isNaN(lat)) {
+            throw new Error("좌표 변환 결과가 올바르지 않습니다.");
+          }
+
+          selectedOfficialAddress = String(selected.roadAddr || selected.jibunAddr || "").trim();
+          selectedSigungu = extractSigunguFromAddressText(selectedOfficialAddress);
+          if (selectedAddressInput) selectedAddressInput.value = selectedOfficialAddress;
+          updateSelectedPoint(lon, lat, "주소 검색 결과 위치");
+          closeAddressSearchModal();
+          setResultMessage("주소 검색이 완료되었습니다. 선택한 주소가 반영되었습니다. 위치가 맞지 않으면 지도에서 다시 선택해주세요.");
+        } catch (error) {
+          console.error(error);
+          setResultMessage("선택한 주소 좌표를 가져오는 중 오류가 발생했습니다: " + error.message);
+        }
+      };
+    }
+  }
+
+  function extractSigunguFromAddressText(addressText) {
+    const text = String(addressText || "").trim();
+    const matches = text.match(/[가-힣]+(?:시|군|구)/g);
+    return matches && matches.length > 0 ? matches[0] : "";
+  }
+
+  function renderAddressSearchModal() {
+    const modal = ensureAddressSearchModal();
+    const subTitle = document.getElementById("addressSearchModalSubTitle");
+    const listEl = document.getElementById("addressSearchModalResultList");
+    const emptyEl = document.getElementById("addressSearchModalEmpty");
+    const pageButtonsEl = document.getElementById("addressPageButtons");
+    const prevBtn = document.getElementById("addressPrevPageBtn");
+    const nextBtn = document.getElementById("addressNextPageBtn");
+
+    if (!modal || !subTitle || !listEl || !emptyEl || !pageButtonsEl || !prevBtn || !nextBtn) return;
+
+    const totalPages = Math.max(1, Math.ceil(addressSearchState.totalCount / addressSearchState.countPerPage));
+    subTitle.textContent = addressSearchState.isLoading
+      ? "주소를 검색하고 있습니다..."
+      : `검색 결과 ${addressSearchState.totalCount}건 중 ${addressSearchState.page}페이지`;
+
+    if (addressSearchState.results.length > 0) {
+      listEl.style.display = "flex";
+      emptyEl.style.display = "none";
+      listEl.innerHTML = addressSearchState.results
+        .map((item, idx) => createAddressCardHtml(item, idx))
+        .join("");
+    } else {
+      listEl.style.display = "none";
+      emptyEl.style.display = "block";
+      emptyEl.textContent = addressSearchState.isLoading
+        ? "주소를 검색하고 있습니다..."
+        : "검색 결과가 없습니다. 시/군/구와 건물번호까지 조금 더 자세히 입력해주세요.";
+    }
+
+    prevBtn.disabled = addressSearchState.page <= 1 || addressSearchState.isLoading;
+    nextBtn.disabled = addressSearchState.page >= totalPages || addressSearchState.isLoading;
+    prevBtn.style.opacity = prevBtn.disabled ? "0.5" : "1";
+    nextBtn.style.opacity = nextBtn.disabled ? "0.5" : "1";
+    prevBtn.style.cursor = prevBtn.disabled ? "not-allowed" : "pointer";
+    nextBtn.style.cursor = nextBtn.disabled ? "not-allowed" : "pointer";
+
+    pageButtonsEl.innerHTML = "";
+    for (let i = 1; i <= totalPages; i++) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = String(i);
+      btn.disabled = addressSearchState.isLoading;
+      btn.style.height = "40px";
+      btn.style.minWidth = "40px";
+      btn.style.padding = "0 12px";
+      btn.style.border = "none";
+      btn.style.borderRadius = "10px";
+      btn.style.fontWeight = "800";
+      btn.style.cursor = addressSearchState.isLoading ? "not-allowed" : "pointer";
+      if (i === addressSearchState.page) {
+        btn.style.background = "#1f5aa8";
+        btn.style.color = "#ffffff";
+      } else {
+        btn.style.background = "#e2e8f0";
+        btn.style.color = "#334155";
+      }
+      btn.onclick = function () {
+        if (i === addressSearchState.page || addressSearchState.isLoading) return;
+        const apiKey = window.APP_CONFIG?.VWORLD_API_KEY;
+        searchAddressList(addressSearchState.keyword, i, apiKey, window.__updateSelectedPointRef);
+      };
+      pageButtonsEl.appendChild(btn);
+    }
+
+    modal.style.display = "flex";
+  }
+
+  async function searchAddressList(keyword, page, apiKey, updateSelectedPoint) {
+    const jusoKey = window.APP_CONFIG?.JUSO_CONFM_KEY;
+    if (!jusoKey) {
+      throw new Error("config.js에 JUSO_CONFM_KEY가 없습니다.");
+    }
+
+    addressSearchState.keyword = String(keyword || "").trim();
+    addressSearchState.page = page;
+    addressSearchState.isLoading = true;
+    addressSearchState.results = [];
+    renderAddressSearchModal();
+
+    try {
+      const url = "https://business.juso.go.kr/addrlink/addrLinkApi.do" +
+        `?confmKey=${encodeURIComponent(jusoKey)}` +
+        `&currentPage=${encodeURIComponent(page)}` +
+        `&countPerPage=${encodeURIComponent(addressSearchState.countPerPage)}` +
+        `&keyword=${encodeURIComponent(addressSearchState.keyword)}` +
+        `&resultType=json`;
+
+      const callbackName = "jusoListCallback_" + Date.now() + "_" + Math.floor(Math.random() * 10000);
+      const data = await jsonpRequest(url, callbackName);
+      const results = data?.results || {};
+      const common = results.common || {};
+      const errorCode = String(common.errorCode || "0");
+      const errorMessage = String(common.errorMessage || "");
+
+      if (errorCode !== "0") {
+        throw new Error(errorMessage || "주소 검색 중 오류가 발생했습니다.");
+      }
+
+      addressSearchState.totalCount = Number(common.totalCount || 0);
+      addressSearchState.results = Array.isArray(results.juso) ? results.juso : [];
+      addressSearchState.isLoading = false;
+      window.__updateSelectedPointRef = updateSelectedPoint;
+      renderAddressSearchModal();
+    } catch (error) {
+      addressSearchState.totalCount = 0;
+      addressSearchState.results = [];
+      addressSearchState.isLoading = false;
+      renderAddressSearchModal();
+      throw error;
+    }
+  }
+
+  async function requestVworldCoordByAddress(apiKey, query) {
+    const baseUrl = "https://api.vworld.kr/req/address";
+
+    async function call(type) {
+      const callbackName = "vworldJsonpCallback_" + Date.now() + "_" + Math.floor(Math.random() * 10000);
+      const url =
+        `${baseUrl}?service=address` +
+        `&request=getcoord` +
+        `&version=2.0` +
+        `&crs=epsg:4326` +
+        `&address=${encodeURIComponent(query)}` +
+        `&refine=true` +
+        `&simple=false` +
+        `&format=json` +
+        `&errorformat=json` +
+        `&type=${encodeURIComponent(type)}` +
+        `&key=${encodeURIComponent(apiKey)}`;
+      return jsonpRequest(url, callbackName);
+    }
+
+    let data = await call("road");
+    if (!data?.response || data.response.status !== "OK" || !data?.response?.result?.point) {
+      data = await call("parcel");
+    }
+
+    if (!data?.response || data.response.status !== "OK" || !data?.response?.result?.point) {
+      throw new Error("선택한 주소의 좌표를 찾지 못했습니다.");
+    }
+    return data;
   }
 
   if (phoneInput) {
@@ -900,29 +1190,8 @@ document.addEventListener("DOMContentLoaded", function () {
         `);
       }
 
-      async function requestVworldCoord(query, type) {
-        const callbackName =
-          "vworldJsonpCallback_" +
-          Date.now() +
-          "_" +
-          Math.floor(Math.random() * 10000);
-
-        const baseUrl =
-          "https://api.vworld.kr/req/address" +
-          `?service=address` +
-          `&request=getcoord` +
-          `&version=2.0` +
-          `&crs=epsg:4326` +
-          `&address=${encodeURIComponent(query)}` +
-          `&refine=true` +
-          `&simple=false` +
-          `&format=json` +
-          `&errorformat=json` +
-          `&type=${encodeURIComponent(type)}` +
-          `&key=${encodeURIComponent(apiKey)}`;
-
-        return await jsonpRequest(baseUrl, callbackName);
-      }
+      window.__updateSelectedPointRef = updateSelectedPoint;
+      bindAddressSearchModalEvents(apiKey, updateSelectedPoint);
 
       async function searchAddressToCoord() {
         const query = addressInput.value.trim();
@@ -932,50 +1201,15 @@ document.addEventListener("DOMContentLoaded", function () {
           return;
         }
 
-        setResultMessage("주소를 찾는 중입니다...");
+        setResultMessage("주소 목록을 찾는 중입니다...");
 
         try {
-          let data = await requestVworldCoord(query, "road");
-
-          if (
-            !data ||
-            !data.response ||
-            data.response.status !== "OK" ||
-            !data.response.result ||
-            !data.response.result.point
-          ) {
-            data = await requestVworldCoord(query, "parcel");
-          }
-
-          if (
-            !data ||
-            !data.response ||
-            data.response.status !== "OK" ||
-            !data.response.result ||
-            !data.response.result.point
-          ) {
+          await searchAddressList(query, 1, apiKey, updateSelectedPoint);
+          if (!addressSearchState.results.length) {
             setResultMessage("주소를 찾지 못했습니다. 시/군/구와 건물번호까지 더 자세히 입력해주세요.");
             return;
           }
-
-          const lon = parseFloat(data.response.result.point.x);
-          const lat = parseFloat(data.response.result.point.y);
-
-          if (Number.isNaN(lon) || Number.isNaN(lat)) {
-            setResultMessage("좌표 변환 결과가 올바르지 않습니다.");
-            return;
-          }
-
-          const officialAddress =
-            buildOfficialAddressFromRefined(data.response.refined) || query;
-          const sigungu = extractSigunguFromRefined(data.response.refined);
-
-          selectedOfficialAddress = officialAddress;
-          selectedSigungu = sigungu;
-          selectedAddressInput.value = officialAddress;
-
-          updateSelectedPoint(lon, lat, "주소 검색 결과 위치");
-          setResultMessage("주소 검색이 완료되었습니다. 정식 주소가 반영되었습니다. 위치가 맞지 않으면 지도에서 다시 선택해주세요.");
+          setResultMessage("주소 검색 결과가 표시되었습니다. 목록에서 원하는 주소를 선택해주세요.");
         } catch (error) {
           console.error(error);
           setResultMessage("주소 검색 중 오류가 발생했습니다: " + error.message);
