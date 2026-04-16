@@ -43,12 +43,60 @@ COMMON_SALES_BANDS = [
     "1억원 초과 ~ 2억원 이하",
     "2억원 초과",
 ]
+JEONNAM_STATION_AREAS = [
+    ("목포", "목포경찰서"),
+    ("여수", "여수경찰서"),
+    ("순천", "순천경찰서"),
+    ("나주", "나주경찰서"),
+    ("광양", "광양경찰서"),
+    ("고흥", "고흥경찰서"),
+    ("해남", "해남경찰서"),
+    ("무안", "무안경찰서"),
+    ("장흥", "장흥경찰서"),
+    ("보성", "보성경찰서"),
+    ("영광", "영광경찰서"),
+    ("화순", "화순경찰서"),
+    ("함평", "함평경찰서"),
+    ("영암", "영암경찰서"),
+    ("장성", "장성경찰서"),
+    ("강진", "강진경찰서"),
+    ("담양", "담양경찰서"),
+    ("곡성", "곡성경찰서"),
+    ("완도", "완도경찰서"),
+    ("진도", "진도경찰서"),
+    ("구례", "구례경찰서"),
+    ("신안", "신안경찰서"),
+]
 
 _COORD_TRANSFORMER = Transformer.from_crs("EPSG:5179", "EPSG:4326", always_xy=True)
 
 
 def _safe_str(v: Any) -> str:
     return str(v).strip() if v is not None else ""
+
+
+def _normalize_text(v: Any) -> str:
+    return _safe_str(v).replace(" ", "")
+
+
+def _infer_station_label_from_address(address_text: str, station_options: List[str]) -> str:
+    normalized = _normalize_text(address_text)
+    if not normalized:
+        return ""
+
+    option_set = set([_safe_str(x) for x in station_options if _safe_str(x)])
+    for area_name, station_label in JEONNAM_STATION_AREAS:
+        tokens = [
+            area_name,
+            f"{area_name}시",
+            f"{area_name}군",
+            f"{area_name}구",
+            station_label.replace("경찰서", ""),
+            station_label,
+        ]
+        if any(_normalize_text(token) and _normalize_text(token) in normalized for token in tokens):
+            return station_label if station_label in option_set else ""
+    return ""
 
 
 def _safe_int(v: Any, default: int = 0) -> int:
@@ -675,45 +723,72 @@ def _render_list_table(rows: List[Dict[str, Any]]):
         st.session_state.pop("selected_application_id", None)
         return
 
-    df = _build_list_df(rows)
-    selected_indexes: List[int] = []
+    current_selected_id = st.session_state.get("selected_application_id")
+    if current_selected_id is None:
+        current_selected_id = rows[0].get("application_id")
+        st.session_state["selected_application_id"] = current_selected_id
 
-    try:
-        event = st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row",
-            key="applications_table",
+    table_rows = []
+    for idx, row in enumerate(rows, start=1):
+        table_rows.append(
+            {
+                "선택": row.get("application_id") == current_selected_id,
+                "_application_id": row.get("application_id"),
+                "번호": idx,
+                "점포명": _safe_str(row.get("business_name")),
+                "신청인": _safe_str(row.get("applicant_name")),
+                "연락처": _safe_str(row.get("phone")),
+                "업종": _display_business_type(row),
+                "경찰서": _safe_str(row.get("station_label")),
+                "접수일시": _format_submitted_text(row.get("submitted_at")),
+                "주소": _full_address(row),
+                "위도": _format_coord(row.get("latitude")),
+                "경도": _format_coord(row.get("longitude")),
+                "체감안전도": _safe_int(row.get("felt_safety_score"), 0),
+                "CPO위험도": _safe_int(row.get("cpo_risk_score"), 0),
+                "보안취약도": _safe_int(row.get("security_vulnerability_score"), 0),
+                "총점": _safe_int(row.get("total_score"), 0),
+                "상태": _status_label(row.get("current_status")),
+            }
         )
-        selected_indexes = _extract_selected_indexes(event)
-    except TypeError:
-        st.dataframe(df, use_container_width=True, hide_index=True)
-        fallback_index = 0
-        current_id = st.session_state.get("selected_application_id")
-        if current_id is not None:
-            for idx, row in enumerate(rows):
-                if row.get("application_id") == current_id:
-                    fallback_index = idx
-                    break
 
-        picked_index = st.selectbox(
-            "상세정보로 볼 접수 선택",
-            options=list(range(len(rows))),
-            index=fallback_index,
-            format_func=lambda i: f"{_safe_str(rows[i].get('business_name'))} | {_safe_str(rows[i].get('applicant_name'))} | {_format_submitted_text(rows[i].get('submitted_at'))}",
-            key="applications_table_fallback_selectbox",
-        )
-        _set_selected_application(rows[picked_index])
-        return
+    editor_df = pd.DataFrame(table_rows)
+    edited_df = st.data_editor(
+        editor_df,
+        use_container_width=True,
+        hide_index=True,
+        disabled=[
+            "_application_id",
+            "번호",
+            "점포명",
+            "신청인",
+            "연락처",
+            "업종",
+            "경찰서",
+            "접수일시",
+            "주소",
+            "위도",
+            "경도",
+            "체감안전도",
+            "CPO위험도",
+            "보안취약도",
+            "총점",
+            "상태",
+        ],
+        column_config={
+            "_application_id": None,
+            "선택": st.column_config.CheckboxColumn("선택", help="체크하면 해당 점포가 아래 지도와 상세정보에 바로 반영됩니다."),
+        },
+        key=f"applications_table_editor_{_safe_str(current_selected_id)}_{len(rows)}",
+    )
 
-    if selected_indexes:
-        picked_index = selected_indexes[0]
-        if 0 <= picked_index < len(rows):
-            _set_selected_application(rows[picked_index])
-    elif st.session_state.get("selected_application_id") is None:
-        _set_selected_application(rows[0])
+    selected_ids = edited_df.loc[edited_df["선택"] == True, "_application_id"].tolist()
+    next_selected_id = selected_ids[-1] if selected_ids else current_selected_id
+
+    if next_selected_id != current_selected_id:
+        st.session_state["selected_application_id"] = next_selected_id
+        st.rerun()
+
 
 
 def _save_review(
