@@ -189,20 +189,41 @@ document.addEventListener("DOMContentLoaded", function () {
     modal.style.display = "none";
     modal.style.alignItems = "center";
     modal.style.justifyContent = "center";
-    modal.style.padding = "20px";
+    modal.style.padding = "10px";
     modal.style.zIndex = "99999";
 
+
     modal.innerHTML = `
-      <div style="width:100%;max-width:520px;background:#ffffff;border-radius:18px;box-shadow:0 20px 45px rgba(15,23,42,0.22);overflow:hidden;border:1px solid #dbe4f0;">
-        <div id="submitCompleteModalHeader" style="padding:18px 22px;background:#eef4ff;border-bottom:1px solid #d7e5ff;">
-          <div id="submitCompleteModalTitle" style="font-size:22px;font-weight:800;color:#1d4ed8;">신청이 정상적으로 접수되었습니다.</div>
+      <div style="width:100%;max-width:430px;background:#ffffff;border-radius:16px;box-shadow:0 16px 32px rgba(15,23,42,0.18);overflow:hidden;border:1px solid #dbe4f0;">
+        <div style="padding:14px 16px;background:#eef4ff;border-bottom:1px solid #d7e5ff;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+          <div>
+            <div style="font-size:18px;font-weight:800;color:#1d4ed8;">주소 검색 결과</div>
+            <div id="addressSearchModalSubTitle" style="margin-top:4px;font-size:12px;color:#475569;">검색 결과 목록에서 원하는 주소를 선택해주세요.</div>
+          </div>
+          <button id="addressSearchModalCloseTop" type="button" style="border:none;background:#dbeafe;color:#1d4ed8;border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;">닫기</button>
         </div>
-        <div style="padding:22px;">
-          <div id="submitCompleteModalBody" style="font-size:15px;line-height:1.9;color:#334155;"></div>
-          <button id="submitCompleteModalConfirm" type="button" style="margin-top:20px;width:100%;height:48px;border:none;border-radius:12px;background:#1f5aa8;color:#ffffff;font-size:16px;font-weight:800;cursor:pointer;">확인</button>
+        <div style="padding:16px;">
+          <div id="addressSearchModalResultList" style="display:flex;flex-direction:column;gap:8px;min-height:120px;"></div>
+          <div id="addressSearchModalEmpty" style="display:none;padding:20px 14px;border:1px dashed #cbd5e1;border-radius:12px;background:#f8fafc;color:#475569;text-align:center;line-height:1.7;font-size:13px;">검색 결과가 없습니다.</div>
+          <div style="margin-top:14px;display:flex;justify-content:center;align-items:center;gap:6px;flex-wrap:wrap;">
+            <button id="addressPrevPageBtn" type="button" style="height:36px;border:none;border-radius:10px;background:#e2e8f0;color:#334155;padding:0 12px;font-weight:700;cursor:pointer;font-size:13px;">이전</button>
+            <div id="addressPageButtons" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+            <button id="addressNextPageBtn" type="button" style="height:36px;border:none;border-radius:10px;background:#e2e8f0;color:#334155;padding:0 12px;font-weight:700;cursor:pointer;font-size:13px;">다음</button>
+          </div>
+          <button id="addressSearchModalCloseBottom" type="button" style="margin-top:14px;width:100%;height:42px;border:none;border-radius:12px;background:#1f5aa8;color:#ffffff;font-size:14px;font-weight:800;cursor:pointer;">닫기</button>
         </div>
       </div>
-    `;
+`   ;
+
+
+
+
+
+
+
+
+
+
 
     document.body.appendChild(modal);
     return modal;
