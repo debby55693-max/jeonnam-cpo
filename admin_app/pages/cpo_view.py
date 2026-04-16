@@ -671,6 +671,42 @@ def _render_detail_summary_cards(row: Dict[str, Any]):
     c4.metric("총점", f"{_safe_int(row.get('total_score'), 0)}점")
 
 
+def _ensure_edit_state(row: Dict[str, Any], station_options: List[str]):
+    application_id = row.get("application_id")
+    prefix = f"edit_{application_id}_"
+
+    defaults = {
+        f"{prefix}applicant_name": _safe_str(row.get("applicant_name")),
+        f"{prefix}business_name": _safe_str(row.get("business_name")),
+        f"{prefix}phone": _safe_str(row.get("phone")),
+        f"{prefix}business_type": _safe_str(row.get("business_type")) or "",
+        f"{prefix}business_type_other": _safe_str(row.get("business_type_other")),
+        f"{prefix}annual_sales": _safe_int(row.get("annual_sales"), 0),
+        f"{prefix}sales_band": _safe_str(row.get("sales_band")) or "",
+        f"{prefix}station_label": _safe_str(row.get("station_label")) if _safe_str(row.get("station_label")) in station_options else "",
+        f"{prefix}address_query": _safe_str(row.get("address_road")),
+        f"{prefix}resolved_address": _safe_str(row.get("address_road")),
+        f"{prefix}address_detail": _safe_str(row.get("address_detail")),
+        f"{prefix}latitude": _safe_float(row.get("latitude"), 0.0),
+        f"{prefix}longitude": _safe_float(row.get("longitude"), 0.0),
+        f"{prefix}has_cctv": bool(row.get("has_cctv")),
+        f"{prefix}has_emergency_bell": bool(row.get("has_emergency_bell")),
+        f"{prefix}uses_security_company": bool(row.get("uses_security_company")),
+        f"{prefix}other_security": _safe_str(row.get("other_security")),
+        f"{prefix}search_message": "",
+    }
+
+    selected_id = st.session_state.get("edit_state_bound_application_id")
+    if selected_id != application_id:
+        for key, value in defaults.items():
+            st.session_state[key] = value
+        st.session_state["edit_state_bound_application_id"] = application_id
+    else:
+        for key, value in defaults.items():
+            if key not in st.session_state:
+                st.session_state[key] = value
+
+
 def _render_application_edit_section(
     row: Dict[str, Any],
     supabase,
@@ -678,9 +714,9 @@ def _render_application_edit_section(
     station_options: List[str],
 ):
     application_id = row.get("application_id")
+    prefix = f"edit_{application_id}_"
 
-    st.markdown("#### 접수 정보 수정 / 삭제")
-    st.caption("주소를 수정해서 저장하면 해당 주소 기준으로 위도·경도를 다시 찾고 지도 위치도 함께 바뀝니다.")
+    _ensure_edit_state(row, station_options)
 
     current_business_type = _safe_str(row.get("business_type"))
     business_type_options = COMMON_BUSINESS_TYPES.copy()
@@ -692,119 +728,125 @@ def _render_application_edit_section(
     if current_sales_band and current_sales_band not in sales_band_options:
         sales_band_options.append(current_sales_band)
 
-    current_station_label = _safe_str(row.get("station_label"))
     station_label_options = [""] + [label for label in station_options if label]
+    current_station_label = _safe_str(row.get("station_label"))
     if current_station_label and current_station_label not in station_label_options:
         station_label_options.append(current_station_label)
 
-    original_address_road = _safe_str(row.get("address_road"))
-    original_address_detail = _safe_str(row.get("address_detail"))
-    original_lat = _safe_float(row.get("latitude"), 0.0)
-    original_lon = _safe_float(row.get("longitude"), 0.0)
+    st.markdown("#### 접수 정보 수정 / 삭제")
+    st.caption("주소 검색을 누르면 정식주소와 위도·경도가 자동 반영되고, 저장 후 지도 위치도 함께 바뀝니다.")
 
-    with st.form(f"application_edit_form_{application_id}"):
-        c1, c2 = st.columns(2)
-        with c1:
-            applicant_name = st.text_input("신청인", value=_safe_str(row.get("applicant_name")))
-            business_name = st.text_input("점포명", value=_safe_str(row.get("business_name")))
-            phone = st.text_input("연락처", value=_safe_str(row.get("phone")))
-            business_type = st.selectbox(
-                "업종",
-                business_type_options,
-                index=business_type_options.index(current_business_type) if current_business_type in business_type_options else 0,
-            )
-            business_type_other = st.text_input("기타 업종", value=_safe_str(row.get("business_type_other")))
-            annual_sales = st.number_input(
-                "연매출",
-                min_value=0,
-                value=_safe_int(row.get("annual_sales"), 0),
-                step=100000,
-            )
-            sales_band = st.selectbox(
-                "연매출 구간",
-                sales_band_options,
-                index=sales_band_options.index(current_sales_band) if current_sales_band in sales_band_options else 0,
-            )
+    c1, c2 = st.columns(2)
+    with c1:
+        st.text_input("신청인", key=f"{prefix}applicant_name")
+        st.text_input("점포명", key=f"{prefix}business_name")
+        st.text_input("연락처", key=f"{prefix}phone")
+        st.selectbox(
+            "업종",
+            business_type_options,
+            index=business_type_options.index(st.session_state.get(f"{prefix}business_type", "")) if st.session_state.get(f"{prefix}business_type", "") in business_type_options else 0,
+            key=f"{prefix}business_type",
+        )
+        st.text_input("기타 업종", key=f"{prefix}business_type_other")
+        st.number_input("연매출", min_value=0, step=100000, key=f"{prefix}annual_sales")
+        st.selectbox(
+            "연매출 구간",
+            sales_band_options,
+            index=sales_band_options.index(st.session_state.get(f"{prefix}sales_band", "")) if st.session_state.get(f"{prefix}sales_band", "") in sales_band_options else 0,
+            key=f"{prefix}sales_band",
+        )
 
-        with c2:
-            station_label = st.selectbox(
-                "관할 경찰서",
-                station_label_options,
-                index=station_label_options.index(current_station_label) if current_station_label in station_label_options else 0,
-            )
-            address_road = st.text_input("주소", value=original_address_road)
-            address_detail = st.text_input("상세주소", value=original_address_detail)
-            latitude = st.number_input(
-                "위도",
-                value=original_lat,
-                format="%.6f",
-            )
-            longitude = st.number_input(
-                "경도",
-                value=original_lon,
-                format="%.6f",
-            )
-            has_cctv = st.checkbox("점포 내 CCTV 있음", value=bool(row.get("has_cctv")))
-            has_emergency_bell = st.checkbox("비상벨 설치됨", value=bool(row.get("has_emergency_bell")))
-            uses_security_company = st.checkbox("사설경비 이용 중", value=bool(row.get("uses_security_company")))
-            other_security = st.text_input("기타 방범시설", value=_safe_str(row.get("other_security")))
+    with c2:
+        st.selectbox(
+            "관할 경찰서",
+            station_label_options,
+            index=station_label_options.index(st.session_state.get(f"{prefix}station_label", "")) if st.session_state.get(f"{prefix}station_label", "") in station_label_options else 0,
+            key=f"{prefix}station_label",
+        )
+        st.text_input("주소 검색어", key=f"{prefix}address_query")
+        st.text_input("정식주소", key=f"{prefix}resolved_address", disabled=True)
+        st.text_input("상세주소", key=f"{prefix}address_detail")
+        st.number_input("위도", format="%.6f", key=f"{prefix}latitude")
+        st.number_input("경도", format="%.6f", key=f"{prefix}longitude")
+        st.checkbox("점포 내 CCTV 있음", key=f"{prefix}has_cctv")
+        st.checkbox("비상벨 설치됨", key=f"{prefix}has_emergency_bell")
+        st.checkbox("사설경비 이용 중", key=f"{prefix}uses_security_company")
+        st.text_input("기타 방범시설", key=f"{prefix}other_security")
 
-        save_btn = st.form_submit_button("상세정보 수정 저장", use_container_width=True)
-
-        if save_btn:
+    b1, b2 = st.columns([1, 2])
+    with b1:
+        if st.button("주소 검색 / 좌표 반영", key=f"{prefix}search_address_btn", use_container_width=True):
             try:
-                address_road_clean = _safe_str(address_road)
-                address_detail_clean = _safe_str(address_detail)
-
-                lat_to_save = float(latitude)
-                lon_to_save = float(longitude)
-
-                address_changed = (
-                    address_road_clean != original_address_road
-                    or address_detail_clean != original_address_detail
-                )
-
-                official_address_for_save = address_road_clean
-
-                if address_changed and address_road_clean:
-                    new_lat, new_lon, official_address = _geocode_address_vworld(address_road_clean)
-                    if new_lat is None or new_lon is None:
-                        raise Exception("수정한 주소로 좌표를 찾지 못했습니다.")
-                    lat_to_save = float(new_lat)
-                    lon_to_save = float(new_lon)
-                    official_address_for_save = official_address or address_road_clean
-
-                update_payload = {
-                    "applicant_name": _safe_str(applicant_name),
-                    "business_name": _safe_str(business_name),
-                    "phone": _safe_str(phone),
-                    "business_type": _safe_str(business_type) or None,
-                    "business_type_other": _safe_str(business_type_other) or None,
-                    "annual_sales": int(annual_sales),
-                    "sales_band": _safe_str(sales_band) or None,
-                    "address_road": official_address_for_save or None,
-                    "address_detail": address_detail_clean or None,
-                    "latitude": lat_to_save,
-                    "longitude": lon_to_save,
-                    "has_cctv": bool(has_cctv),
-                    "has_emergency_bell": bool(has_emergency_bell),
-                    "uses_security_company": bool(uses_security_company),
-                    "other_security": _safe_str(other_security) or None,
-                    "station_label": _safe_str(station_label),
-                }
-
-                _update_application(
-                    supabase=supabase,
-                    application_id=application_id,
-                    station_map=station_map,
-                    payload=update_payload,
-                )
-
-                st.session_state["selected_application_id"] = application_id
-                st.success("상세정보가 수정되었습니다. 주소가 변경된 경우 좌표와 지도 위치도 함께 반영되었습니다.")
+                query = _safe_str(st.session_state.get(f"{prefix}address_query"))
+                if not query:
+                    st.session_state[f"{prefix}search_message"] = "주소 검색어를 먼저 입력해주세요."
+                else:
+                    lat, lon, official_address = _geocode_address_vworld(query)
+                    if lat is None or lon is None:
+                        raise Exception("입력한 주소로 좌표를 찾지 못했습니다.")
+                    st.session_state[f"{prefix}resolved_address"] = official_address or query
+                    st.session_state[f"{prefix}latitude"] = float(lat)
+                    st.session_state[f"{prefix}longitude"] = float(lon)
+                    st.session_state[f"{prefix}search_message"] = "정식주소와 좌표를 반영했습니다."
                 st.rerun()
             except Exception as exc:
-                st.error(f"상세정보 수정 실패: {exc}")
+                st.session_state[f"{prefix}search_message"] = f"주소 검색 실패: {exc}"
+                st.rerun()
+    with b2:
+        msg = _safe_str(st.session_state.get(f"{prefix}search_message"))
+        if msg:
+            st.caption(msg)
+
+    if st.button("상세정보 수정 저장", key=f"{prefix}save_btn", use_container_width=True):
+        try:
+            address_query = _safe_str(st.session_state.get(f"{prefix}address_query"))
+            resolved_address = _safe_str(st.session_state.get(f"{prefix}resolved_address"))
+            address_detail = _safe_str(st.session_state.get(f"{prefix}address_detail"))
+
+            final_address = resolved_address or address_query
+            lat_to_save = _safe_float(st.session_state.get(f"{prefix}latitude"), 0.0)
+            lon_to_save = _safe_float(st.session_state.get(f"{prefix}longitude"), 0.0)
+
+            if address_query:
+                new_lat, new_lon, official_address = _geocode_address_vworld(address_query)
+                if new_lat is not None and new_lon is not None:
+                    lat_to_save = float(new_lat)
+                    lon_to_save = float(new_lon)
+                    final_address = official_address or address_query
+                    st.session_state[f"{prefix}resolved_address"] = final_address
+                    st.session_state[f"{prefix}latitude"] = lat_to_save
+                    st.session_state[f"{prefix}longitude"] = lon_to_save
+
+            update_payload = {
+                "applicant_name": _safe_str(st.session_state.get(f"{prefix}applicant_name")) or None,
+                "business_name": _safe_str(st.session_state.get(f"{prefix}business_name")) or None,
+                "phone": _safe_str(st.session_state.get(f"{prefix}phone")) or None,
+                "business_type": _safe_str(st.session_state.get(f"{prefix}business_type")) or None,
+                "business_type_other": _safe_str(st.session_state.get(f"{prefix}business_type_other")) or None,
+                "annual_sales": int(_safe_int(st.session_state.get(f"{prefix}annual_sales"), 0)),
+                "sales_band": _safe_str(st.session_state.get(f"{prefix}sales_band")) or None,
+                "address_road": final_address or None,
+                "address_detail": address_detail or None,
+                "latitude": lat_to_save,
+                "longitude": lon_to_save,
+                "has_cctv": bool(st.session_state.get(f"{prefix}has_cctv")),
+                "has_emergency_bell": bool(st.session_state.get(f"{prefix}has_emergency_bell")),
+                "uses_security_company": bool(st.session_state.get(f"{prefix}uses_security_company")),
+                "other_security": _safe_str(st.session_state.get(f"{prefix}other_security")) or None,
+                "station_label": _safe_str(st.session_state.get(f"{prefix}station_label")),
+            }
+
+            _update_application(
+                supabase=supabase,
+                application_id=application_id,
+                station_map=station_map,
+                payload=update_payload,
+            )
+
+            st.success("상세정보가 수정되었습니다. 정식주소, 위도·경도, 지도 위치가 함께 반영되었습니다.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"상세정보 수정 실패: {exc}")
 
     with st.expander("접수건 삭제", expanded=False):
         st.warning("삭제하면 해당 접수건과 관련 검토 이력이 함께 삭제됩니다.")
