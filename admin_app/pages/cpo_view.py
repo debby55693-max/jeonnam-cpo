@@ -508,11 +508,9 @@ def _extract_selected_indexes(event: Any) -> List[int]:
             selection = event.get("selection")
         if selection is None:
             return []
-
         rows = getattr(selection, "rows", None)
         if rows is not None:
             return list(rows)
-
         if isinstance(selection, dict):
             return list(selection.get("rows", []) or [])
     except Exception:
@@ -827,6 +825,7 @@ def _ensure_edit_state(row: Dict[str, Any], station_options: List[str]):
                 st.session_state[key] = value
 
 
+
 def _render_application_edit_section(
     row: Dict[str, Any],
     supabase,
@@ -854,65 +853,85 @@ def _render_application_edit_section(
     _ensure_edit_state(row, station_label_options)
 
     st.markdown("#### 접수 정보 수정 / 삭제")
-    st.caption("설문지처럼 주소를 검색해서 정식주소를 선택하면 좌표와 지도 위치가 함께 바뀝니다.")
 
-    c_addr1, c_addr2 = st.columns([4, 1])
-    with c_addr1:
-        st.text_input("주소 검색어", key=f"{prefix}address_query")
-    with c_addr2:
-        search_clicked = st.button("주소 검색", key=f"{prefix}search_btn", use_container_width=True)
+    with st.container(border=True):
+        st.markdown("##### 점포 위치")
+        st.caption("설문지처럼 주소를 검색한 뒤 결과를 선택하면 선택된 주소와 좌표가 자동 반영됩니다. 저장하면 지도 위치도 함께 바뀝니다.")
 
-    if search_clicked:
-        try:
-            query = _safe_str(st.session_state.get(f"{prefix}address_query"))
-            if not query:
-                st.session_state[f"{prefix}search_message"] = "주소 검색어를 먼저 입력해주세요."
-                st.session_state[f"{prefix}search_results"] = []
-            else:
-                results = _search_juso_addresses(query)
-                st.session_state[f"{prefix}search_results"] = results
-                st.session_state[f"{prefix}selected_search_idx"] = 0
-                if results:
-                    st.session_state[f"{prefix}search_message"] = f"검색 결과 {len(results)}건을 찾았습니다. 아래에서 주소를 선택해주세요."
-                else:
-                    st.session_state[f"{prefix}search_message"] = "검색 결과가 없습니다. 시/군/구와 도로명, 건물번호를 더 자세히 입력해주세요."
-            st.rerun()
-        except Exception as exc:
-            st.session_state[f"{prefix}search_results"] = []
-            st.session_state[f"{prefix}search_message"] = f"주소 검색 실패: {exc}"
-            st.rerun()
+        c_addr1, c_addr2 = st.columns([5, 1])
+        with c_addr1:
+            st.text_input(
+                "주소 입력",
+                key=f"{prefix}address_query",
+                placeholder="예: 전라남도 목포시 ○○로 123",
+            )
+        with c_addr2:
+            search_clicked = st.button("주소 검색", key=f"{prefix}search_btn", use_container_width=True)
 
-    msg = _safe_str(st.session_state.get(f"{prefix}search_message"))
-    if msg:
-        st.caption(msg)
-
-    search_results = st.session_state.get(f"{prefix}search_results", []) or []
-    if search_results:
-        options = list(range(len(search_results)))
-        selected_idx = st.radio(
-            "주소 검색 결과",
-            options,
-            index=min(_safe_int(st.session_state.get(f"{prefix}selected_search_idx"), 0), len(options) - 1),
-            format_func=lambda i: (
-                f"{_safe_str(search_results[i].get('roadAddr'))} "
-                f"(지번: {_safe_str(search_results[i].get('jibunAddr')) or '-'})"
-            ),
-            key=f"{prefix}selected_search_idx",
-        )
-
-        if st.button("선택한 주소 반영", key=f"{prefix}apply_selected_address_btn", use_container_width=True):
+        if search_clicked:
             try:
-                selected = search_results[selected_idx]
-                official_address, lat, lon = _resolve_candidate_to_address_and_coord(selected)
-                st.session_state[f"{prefix}resolved_address"] = official_address
-                st.session_state[f"{prefix}address_query"] = official_address
-                st.session_state[f"{prefix}latitude"] = float(lat)
-                st.session_state[f"{prefix}longitude"] = float(lon)
-                st.session_state[f"{prefix}search_message"] = "선택한 주소를 반영했습니다. 저장하면 지도 위치도 함께 변경됩니다."
+                query = _safe_str(st.session_state.get(f"{prefix}address_query"))
+                if not query:
+                    st.session_state[f"{prefix}search_message"] = "주소를 먼저 입력해주세요."
+                    st.session_state[f"{prefix}search_results"] = []
+                else:
+                    results = _search_juso_addresses(query)
+                    st.session_state[f"{prefix}search_results"] = results
+                    st.session_state[f"{prefix}selected_search_idx"] = 0
+                    if results:
+                        st.session_state[f"{prefix}search_message"] = f"검색 결과 {len(results)}건을 찾았습니다. 아래에서 주소를 선택해주세요."
+                    else:
+                        st.session_state[f"{prefix}search_message"] = "검색 결과가 없습니다. 시/군/구와 도로명, 건물번호를 더 자세히 입력해주세요."
                 st.rerun()
             except Exception as exc:
-                st.session_state[f"{prefix}search_message"] = f"주소 반영 실패: {exc}"
+                st.session_state[f"{prefix}search_results"] = []
+                st.session_state[f"{prefix}search_message"] = f"주소 검색 실패: {exc}"
                 st.rerun()
+
+        msg = _safe_str(st.session_state.get(f"{prefix}search_message"))
+        if msg:
+            st.caption(msg)
+
+        search_results = st.session_state.get(f"{prefix}search_results", []) or []
+        if search_results:
+            st.radio(
+                "검색 결과",
+                list(range(len(search_results))),
+                index=min(_safe_int(st.session_state.get(f"{prefix}selected_search_idx"), 0), len(search_results) - 1),
+                format_func=lambda i: (
+                    f"{_safe_str(search_results[i].get('roadAddr'))} "
+                    f"(지번: {_safe_str(search_results[i].get('jibunAddr')) or '-'})"
+                ),
+                key=f"{prefix}selected_search_idx",
+            )
+
+            if st.button("선택한 주소 반영", key=f"{prefix}apply_selected_address_btn", use_container_width=True):
+                try:
+                    selected_idx = _safe_int(st.session_state.get(f"{prefix}selected_search_idx"), 0)
+                    selected = search_results[selected_idx]
+                    chosen_address, lat, lon = _resolve_candidate_to_address_and_coord(selected)
+                    st.session_state[f"{prefix}resolved_address"] = chosen_address
+                    st.session_state[f"{prefix}latitude"] = float(lat)
+                    st.session_state[f"{prefix}longitude"] = float(lon)
+                    st.session_state[f"{prefix}search_message"] = "선택한 주소를 반영했습니다. 저장하면 지도 위치도 함께 변경됩니다."
+                    st.rerun()
+                except Exception as exc:
+                    st.session_state[f"{prefix}search_message"] = f"주소 반영 실패: {exc}"
+                    st.rerun()
+
+        st.text_input(
+            "선택된 주소",
+            key=f"{prefix}resolved_address",
+            placeholder="주소 검색 결과를 선택하면 여기에 반영됩니다.",
+            disabled=True,
+        )
+        st.text_input(
+            "상세 주소",
+            key=f"{prefix}address_detail",
+            placeholder="예: 1층, 101호",
+        )
+
+        st.info("선택한 주소 위치가 지도에 반영됩니다. 위치가 맞지 않으면 다른 검색 결과를 선택한 뒤 다시 반영해주세요.")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -941,8 +960,6 @@ def _render_application_edit_section(
             index=station_label_options.index(st.session_state.get(f"{prefix}station_label", "")) if st.session_state.get(f"{prefix}station_label", "") in station_label_options else 0,
             key=f"{prefix}station_label",
         )
-        st.text_input("정식주소", key=f"{prefix}resolved_address")
-        st.text_input("상세주소", key=f"{prefix}address_detail")
         st.number_input("위도", format="%.6f", key=f"{prefix}latitude")
         st.number_input("경도", format="%.6f", key=f"{prefix}longitude")
         st.checkbox("점포 내 CCTV 있음", key=f"{prefix}has_cctv")
@@ -987,7 +1004,7 @@ def _render_application_edit_section(
                 station_map=station_map,
                 payload=update_payload,
             )
-            st.success("상세정보가 수정되었습니다. 정식주소, 위도·경도, 지도 위치가 함께 반영되었습니다.")
+            st.success("상세정보가 수정되었습니다. 선택한 주소와 좌표, 지도 위치가 함께 반영되었습니다.")
             st.rerun()
         except Exception as exc:
             st.error(f"상세정보 수정 실패: {exc}")
@@ -1011,7 +1028,6 @@ def _render_application_edit_section(
                     st.rerun()
                 except Exception as exc:
                     st.error(f"삭제 실패: {exc}")
-
 
 def _render_detail(
     row: Dict[str, Any],
