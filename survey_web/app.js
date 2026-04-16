@@ -527,6 +527,18 @@ document.addEventListener("DOMContentLoaded", function () {
     return FALLBACK_STATION_AREAS;
   }
 
+  function normalizeAddressKeyword(value) {
+    let text = String(value || "").trim();
+    if (!text) return "";
+
+    text = text.replace(/\s+/g, " ");
+    text = text.replace(/([가-힣A-Za-z·\d]+로|[가-힣A-Za-z·\d]+길)(\d+)/g, "$1 $2");
+    text = text.replace(/(읍|면|동)([가-힣A-Za-z·\d])/g, "$1 $2");
+
+    return text.trim();
+  }
+
+
   function inferStationByAddress(addressText, sigunguText = "") {
     const normalizedAddress = normalizeText(addressText);
     const normalizedSigungu = normalizeText(sigunguText);
@@ -982,7 +994,8 @@ document.addEventListener("DOMContentLoaded", function () {
     renderAddressSearchModal();
 
     try {
-      const url = "https://business.juso.go.kr/addrlink/addrLinkApi.do" +
+      const url = "https://business.juso.go.kr/addrlink/addrLinkApiJsonp.do" +
+  
         `?confmKey=${encodeURIComponent(jusoKey)}` +
         `&currentPage=${encodeURIComponent(page)}` +
         `&countPerPage=${encodeURIComponent(addressSearchState.countPerPage)}` +
@@ -1010,6 +1023,7 @@ document.addEventListener("DOMContentLoaded", function () {
       addressSearchState.results = [];
       addressSearchState.isLoading = false;
       renderAddressSearchModal();
+      setResultMessage("주소 검색 중 오류가 발생했습니다: " + error.message);
       throw error;
     }
   }
@@ -1194,7 +1208,15 @@ document.addEventListener("DOMContentLoaded", function () {
       bindAddressSearchModalEvents(apiKey, updateSelectedPoint);
 
       async function searchAddressToCoord() {
-        const query = addressInput.value.trim();
+        
+        const rawQuery = addressInput.value.trim();
+        const query = normalizeAddressKeyword(rawQuery);
+
+        if (addressInput && query && addressInput.value !== query) {
+        addressInput.value = query;
+        }
+
+        
 
         if (!query) {
           setResultMessage("주소를 먼저 입력해주세요.");
