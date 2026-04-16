@@ -516,6 +516,7 @@ def _selected_row(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 def _sync_selected_row_by_selectbox(rows: List[Dict[str, Any]]):
     if not rows:
         st.session_state.pop("selected_application_id", None)
+        st.session_state.pop("selected_application_selectbox", None)
         return
 
     options = []
@@ -537,16 +538,21 @@ def _sync_selected_row_by_selectbox(rows: List[Dict[str, Any]]):
         current_id = option_ids[0]
         st.session_state["selected_application_id"] = current_id
 
+    if st.session_state.get("selected_application_selectbox") != current_id:
+        st.session_state["selected_application_selectbox"] = current_id
+
     id_to_label = {item["application_id"]: item["label"] for item in options}
 
     selected_id = st.selectbox(
         "선택 점포",
         option_ids,
-        index=option_ids.index(current_id),
         format_func=lambda x: id_to_label.get(x, str(x)),
         key="selected_application_selectbox",
     )
-    st.session_state["selected_application_id"] = selected_id
+
+    if selected_id != current_id:
+        st.session_state["selected_application_id"] = selected_id
+        st.rerun()
 
 
 def _extract_selected_indexes(event: Any) -> List[int]:
@@ -787,6 +793,7 @@ def _render_list_table(rows: List[Dict[str, Any]]):
 
     if next_selected_id != current_selected_id:
         st.session_state["selected_application_id"] = next_selected_id
+        st.session_state["selected_application_selectbox"] = next_selected_id
         st.rerun()
 
 
@@ -1295,9 +1302,11 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
                 current_id = st.session_state.get("selected_application_id")
                 if current_id not in ids:
                     st.session_state["selected_application_id"] = ids[0]
+                    st.session_state["selected_application_selectbox"] = ids[0]
                 else:
                     idx = ids.index(current_id)
                     st.session_state["selected_application_id"] = ids[max(0, idx - 1)]
+                st.session_state["selected_application_selectbox"] = st.session_state.get("selected_application_id")
                 st.rerun()
         with n2:
             if st.button("다음 점포", use_container_width=True):
@@ -1305,9 +1314,11 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
                 current_id = st.session_state.get("selected_application_id")
                 if current_id not in ids:
                     st.session_state["selected_application_id"] = ids[0]
+                    st.session_state["selected_application_selectbox"] = ids[0]
                 else:
                     idx = ids.index(current_id)
                     st.session_state["selected_application_id"] = ids[min(len(ids) - 1, idx + 1)]
+                st.session_state["selected_application_selectbox"] = st.session_state.get("selected_application_id")
                 st.rerun()
         with n3:
             st.caption("접수 목록이나 선택 점포를 바꾸면 지도와 아래 상세정보가 함께 바뀝니다.")
