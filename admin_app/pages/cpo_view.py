@@ -723,6 +723,7 @@ def _build_list_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(table_rows)
 
 
+
 def _render_list_table(rows: List[Dict[str, Any]]):
     if not rows:
         st.info("조회 결과가 없습니다.")
@@ -730,72 +731,80 @@ def _render_list_table(rows: List[Dict[str, Any]]):
         return
 
     current_selected_id = st.session_state.get("selected_application_id")
-    if current_selected_id is None:
+    if current_selected_id is None or current_selected_id not in [row.get("application_id") for row in rows]:
         current_selected_id = rows[0].get("application_id")
         st.session_state["selected_application_id"] = current_selected_id
+        st.session_state["selected_application_selectbox"] = current_selected_id
 
-    table_rows = []
+    df = _build_list_df(rows)
+
+    try:
+        event = st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="applications_click_table",
+        )
+        selected_indexes = _extract_selected_indexes(event)
+    except TypeError:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        selected_indexes = []
+
+    if selected_indexes:
+        picked_index = selected_indexes[0]
+        if 0 <= picked_index < len(rows):
+            next_selected_id = rows[picked_index].get("application_id")
+            st.session_state["selected_application_id"] = next_selected_id
+            st.session_state["selected_application_selectbox"] = next_selected_id
+
+
+def _render_download_selector(rows: List[Dict[str, Any]]) -> List[Any]:
+    if not rows:
+        return []
+
+    visible_ids = [row.get("application_id") for row in rows]
+    stored_ids = st.session_state.get("download_selected_application_ids", [])
+    stored_ids = [x for x in stored_ids if x in visible_ids]
+    st.session_state["download_selected_application_ids"] = stored_ids
+
+    selector_rows = []
     for idx, row in enumerate(rows, start=1):
-        table_rows.append(
+        app_id = row.get("application_id")
+        selector_rows.append(
             {
-                "선택": row.get("application_id") == current_selected_id,
-                "_application_id": row.get("application_id"),
+                "다운로드": app_id in stored_ids,
+                "_application_id": app_id,
                 "번호": idx,
                 "점포명": _safe_str(row.get("business_name")),
                 "신청인": _safe_str(row.get("applicant_name")),
-                "연락처": _safe_str(row.get("phone")),
-                "업종": _display_business_type(row),
                 "경찰서": _safe_str(row.get("station_label")),
                 "접수일시": _format_submitted_text(row.get("submitted_at")),
                 "주소": _full_address(row),
-                "위도": _format_coord(row.get("latitude")),
-                "경도": _format_coord(row.get("longitude")),
-                "체감안전도": _safe_int(row.get("felt_safety_score"), 0),
-                "CPO위험도": _safe_int(row.get("cpo_risk_score"), 0),
-                "보안취약도": _safe_int(row.get("security_vulnerability_score"), 0),
-                "총점": _safe_int(row.get("total_score"), 0),
                 "상태": _status_label(row.get("current_status")),
             }
         )
 
-    editor_df = pd.DataFrame(table_rows)
+    editor_df = pd.DataFrame(selector_rows)
     edited_df = st.data_editor(
         editor_df,
         use_container_width=True,
         hide_index=True,
-        disabled=[
-            "_application_id",
-            "번호",
-            "점포명",
-            "신청인",
-            "연락처",
-            "업종",
-            "경찰서",
-            "접수일시",
-            "주소",
-            "위도",
-            "경도",
-            "체감안전도",
-            "CPO위험도",
-            "보안취약도",
-            "총점",
-            "상태",
-        ],
+        disabled=["_application_id", "번호", "점포명", "신청인", "경찰서", "접수일시", "주소", "상태"],
         column_config={
             "_application_id": None,
-            "선택": st.column_config.CheckboxColumn("선택", help="체크하면 해당 점포가 아래 지도와 상세정보에 바로 반영됩니다."),
+            "다운로드": st.column_config.CheckboxColumn(
+                "다운로드",
+                help="체크한 점포만 별도 다운로드할 수 있습니다.",
+            ),
         },
-        key=f"applications_table_editor_{_safe_str(current_selected_id)}_{len(rows)}",
+        key="download_target_editor",
     )
 
-    selected_ids = edited_df.loc[edited_df["선택"] == True, "_application_id"].tolist()
-    next_selected_id = selected_ids[-1] if selected_ids else current_selected_id
-
-    if next_selected_id != current_selected_id:
-        st.session_state["selected_application_id"] = next_selected_id
-        st.session_state["selected_application_selectbox"] = next_selected_id
-        st.rerun()
-
+    checked_ids = edited_df.loc[edited_df["다운로드"] == True, "_application_id"].tolist()
+    st.session_state["download_selected_application_ids"] = checked_ids
+    return checked_ids
 
 
 def _save_review(
@@ -1276,6 +1285,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     _render_priority_table(filtered_rows)
 
     st.markdown("### 접수 목록 현황")
+    st.caption("목록의 아무 칸이나 클릭하면 해당 점포가 아래 지도와 상세정보에 바로 반영됩니다.")
     _render_list_table(filtered_rows)
 
     if filtered_rows:
@@ -1287,6 +1297,24 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
+
+        st.markdown("#### 체크한 점포만 다운로드")
+        st.caption("아래 체크는 상세조회용이 아니라 다운로드 대상 선택용입니다.")
+        checked_ids = _render_download_selector(filtered_rows)
+
+        if checked_ids:
+            selected_export_rows = [row for row in filtered_rows if row.get("application_id") in checked_ids]
+            selected_export_df = _build_export_df(selected_export_rows)
+            st.download_button(
+                f"체크한 점포 {len(checked_ids)}건 다운로드",
+                data=_df_to_excel_bytes(selected_export_df),
+                file_name=f"applications_selected_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key="download_checked_applications",
+            )
+        else:
+            st.info("다운로드할 점포를 체크해주세요.")
 
     st.markdown("### 접수 현황 지도")
     selected_row = _selected_row(filtered_rows)
