@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import requests
 import streamlit as st
+from pyproj import Transformer
 
 
 STATUS_LABELS = {
@@ -42,6 +43,8 @@ COMMON_SALES_BANDS = [
     "1억원 초과 ~ 2억원 이하",
     "2억원 초과",
 ]
+
+_COORD_TRANSFORMER = Transformer.from_crs("EPSG:5179", "EPSG:4326", always_xy=True)
 
 
 def _safe_str(v: Any) -> str:
@@ -123,6 +126,187 @@ def _format_submitted_text(value: Any) -> str:
 def _format_coord(value: Any) -> str:
     num = _safe_float(value, 0.0)
     return f"{num:.6f}" if num else "-"
+
+
+def _get_secret_first(*keys: str) -> str:
+    for key in keys:
+        try:
+            if key in st.secrets and _safe_str(st.secrets[key]):
+                return _safe_str(st.secrets[key])
+        except Exception:
+            pass
+    return ""
+
+
+def _get_juso_search_key() -> str:
+    return _get_secret_first(
+        "JUSO_CONFM_KEY",
+        "JUSO_SEARCH_CONFM_KEY",
+        "JUSO_SEARCH_KEY",
+        "JUSO_KEY",
+        "juso_confm_key",
+        "juso_search_key",
+        "juso_key",
+    )
+
+
+def _get_juso_coord_key() -> str:
+    return _get_secret_first(
+        "JUSO_COORD_CONFM_KEY",
+        "JUSO_ADDRCOORD_CONFM_KEY",
+        "JUSO_COORD_KEY",
+        "JUSO_KEY",
+        "juso_coord_confm_key",
+        "juso_coord_key",
+        "juso_key",
+    )
+
+
+def _get_vworld_api_key() -> str:
+    return _get_secret_first(
+        "VWORLD_API_KEY",
+        "V_WORLD_API_KEY",
+        "VWORLD_KEY",
+        "vworld_api_key",
+        "vworld_key",
+    )
+
+
+def _search_juso_addresses(query: str) -> List[Dict[str, Any]]:
+    query = _safe_str(query)
+    if not query:
+        return []
+
+    key = _get_juso_search_key()
+    if not key:
+        raise Exception("JUSO 검색 키가 st.secrets에 없습니다.")
+
+    url = "https://business.juso.go.kr/addrlink/addrLinkApi.do"
+    params = {
+        "confmKey": key,
+        "currentPage": 1,
+        "countPerPage": 10,
+        "keyword": query,
+        "resultType": "json",
+    }
+    resp = requests.get(url, params=params, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+    results = data.get("results") or {}
+    common = results.get("common") or {}
+    error_code = _safe_str(common.get("errorCode"))
+    error_message = _safe_str(common.get("errorMessage"))
+    if error_code and error_code != "0":
+        raise Exception(error_message or f"주소 검색 오류({error_code})")
+    return list(results.get("juso") or [])
+
+
+def _coord_from_juso_candidate(candidate: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
+    key = _get_juso_coord_key()
+    if not key:
+        return None, None
+
+    url = "https://business.juso.go.kr/addrlink/addrCoordApi.do"
+    params = {
+        "confmKey": key,
+        "admCd": _safe_str(candidate.get("admCd")),
+        "rnMgtSn": _safe_str(candidate.get("rnMgtSn")),
+        "udrtYn": _safe_str(candidate.get("udrtYn")) or "0",
+        "buldMnnm": _safe_str(candidate.get("buldMnnm")),
+        "buldSlno": _safe_str(candidate.get("buldSlno")) or "0",
+        "resultType": "json",
+    }
+    resp = requests.get(url, params=params, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+    results = data.get("results") or {}
+    common = results.get("common") or {}
+    error_code = _safe_str(common.get("errorCode"))
+    error_message = _safe_str(common.get("errorMessage"))
+    if error_code and error_code != "0":
+        raise Exception(error_message or f"좌표 검색 오류({error_code})")
+
+    juso_list = list(results.get("juso") or [])
+    if not juso_list:
+        return None, None
+
+    first = juso_list[0]
+    ent_x = _safe_str(first.get("entX"))
+    ent_y = _safe_str(first.get("entY"))
+    if not ent_x or not ent_y:
+        return None, None
+
+    x = float(ent_x)
+    y = float(ent_y)
+    lon, lat = _COORD_TRANSFORMER.transform(x, y)
+    return float(lat), float(lon)
+
+
+def _coord_from_vworld(address: str) -> Tuple[Optional[float], Optional[float], str]:
+    query = _safe_str(address)
+    if not query:
+        return None, None, ""
+
+    api_key = _get_vworld_api_key()
+    if not api_key:
+        return None, None, ""
+
+    url = "https://api.vworld.kr/req/address"
+
+    def _call(addr_type: str) -> Tuple[Optional[float], Optional[float], str]:
+        params = {
+            "service": "address",
+            "request": "getcoord",
+            "version": "2.0",
+            "crs": "epsg:4326",
+            "address": query,
+            "refine": "true",
+            "simple": "false",
+            "format": "json",
+            "errorformat": "json",
+            "type": addr_type,
+            "key": api_key,
+        }
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        response = data.get("response") or {}
+        if response.get("status") != "OK":
+            return None, None, ""
+        result = response.get("result") or {}
+        point = result.get("point") or {}
+        refined = response.get("refined") or {}
+        x = point.get("x")
+        y = point.get("y")
+        try:
+            lon = float(x)
+            lat = float(y)
+        except Exception:
+            return None, None, ""
+        official_address = _safe_str(refined.get("text")) or query
+        return lat, lon, official_address
+
+    for addr_type in ["road", "parcel"]:
+        lat, lon, official = _call(addr_type)
+        if lat is not None and lon is not None:
+            return lat, lon, official
+    return None, None, ""
+
+
+def _resolve_candidate_to_address_and_coord(candidate: Dict[str, Any]) -> Tuple[str, float, float]:
+    road_addr = _safe_str(candidate.get("roadAddr"))
+    jibun_addr = _safe_str(candidate.get("jibunAddr"))
+    official_address = road_addr or jibun_addr
+
+    lat, lon = _coord_from_juso_candidate(candidate)
+    if lat is not None and lon is not None:
+        return official_address, float(lat), float(lon)
+
+    lat, lon, vworld_official = _coord_from_vworld(road_addr or jibun_addr)
+    if lat is not None and lon is not None:
+        return vworld_official or official_address, float(lat), float(lon)
+
+    raise Exception("선택한 주소의 좌표를 찾지 못했습니다. JUSO 좌표키 또는 VWORLD 키를 확인해주세요.")
 
 
 def _fetch_rows(supabase) -> List[Dict[str, Any]]:
@@ -270,9 +454,6 @@ def _build_export_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
 
 def _set_selected_application(row: Dict[str, Any]):
     st.session_state["selected_application_id"] = row.get("application_id")
-    st.session_state["selected_lat"] = _safe_float(row.get("latitude"), 0.0)
-    st.session_state["selected_lon"] = _safe_float(row.get("longitude"), 0.0)
-    st.session_state["selected_business_name"] = _safe_str(row.get("business_name"))
 
 
 def _selected_row(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -337,72 +518,6 @@ def _extract_selected_indexes(event: Any) -> List[int]:
     except Exception:
         return []
     return []
-
-
-def _get_vworld_api_key() -> str:
-    if "VWORLD_API_KEY" in st.secrets:
-        return _safe_str(st.secrets["VWORLD_API_KEY"])
-    if "vworld_api_key" in st.secrets:
-        return _safe_str(st.secrets["vworld_api_key"])
-    return ""
-
-
-def _geocode_address_vworld(address: str) -> Tuple[Optional[float], Optional[float], str]:
-    query = _safe_str(address)
-    if not query:
-        return None, None, ""
-
-    api_key = _get_vworld_api_key()
-    if not api_key:
-        raise Exception("VWORLD_API_KEY가 st.secrets에 없습니다.")
-
-    def _request(addr_type: str) -> Dict[str, Any]:
-        url = "https://api.vworld.kr/req/address"
-        params = {
-            "service": "address",
-            "request": "getcoord",
-            "version": "2.0",
-            "crs": "epsg:4326",
-            "address": query,
-            "refine": "true",
-            "simple": "false",
-            "format": "json",
-            "errorformat": "json",
-            "type": addr_type,
-            "key": api_key,
-        }
-        resp = requests.get(url, params=params, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
-
-    def _parse(data: Dict[str, Any]) -> Tuple[Optional[float], Optional[float], str]:
-        response = data.get("response") or {}
-        if response.get("status") != "OK":
-            return None, None, ""
-
-        result = response.get("result") or {}
-        point = result.get("point") or {}
-        refined = response.get("refined") or {}
-
-        x = point.get("x")
-        y = point.get("y")
-
-        try:
-            lon = float(x)
-            lat = float(y)
-        except Exception:
-            return None, None, ""
-
-        official_address = _safe_str(refined.get("text")) or query
-        return lat, lon, official_address
-
-    for addr_type in ["road", "parcel"]:
-        data = _request(addr_type)
-        lat, lon, official_address = _parse(data)
-        if lat is not None and lon is not None:
-            return lat, lon, official_address
-
-    raise Exception("입력한 주소로 좌표를 찾지 못했습니다.")
 
 
 def _render_map(rows: List[Dict[str, Any]], selected_row: Optional[Dict[str, Any]]):
@@ -674,6 +789,9 @@ def _render_detail_summary_cards(row: Dict[str, Any]):
 def _ensure_edit_state(row: Dict[str, Any], station_options: List[str]):
     application_id = row.get("application_id")
     prefix = f"edit_{application_id}_"
+    current_station_label = _safe_str(row.get("station_label"))
+    if current_station_label and current_station_label not in station_options:
+        station_options = [*station_options, current_station_label]
 
     defaults = {
         f"{prefix}applicant_name": _safe_str(row.get("applicant_name")),
@@ -683,7 +801,7 @@ def _ensure_edit_state(row: Dict[str, Any], station_options: List[str]):
         f"{prefix}business_type_other": _safe_str(row.get("business_type_other")),
         f"{prefix}annual_sales": _safe_int(row.get("annual_sales"), 0),
         f"{prefix}sales_band": _safe_str(row.get("sales_band")) or "",
-        f"{prefix}station_label": _safe_str(row.get("station_label")) if _safe_str(row.get("station_label")) in station_options else "",
+        f"{prefix}station_label": current_station_label if current_station_label in station_options else "",
         f"{prefix}address_query": _safe_str(row.get("address_road")),
         f"{prefix}resolved_address": _safe_str(row.get("address_road")),
         f"{prefix}address_detail": _safe_str(row.get("address_detail")),
@@ -694,10 +812,12 @@ def _ensure_edit_state(row: Dict[str, Any], station_options: List[str]):
         f"{prefix}uses_security_company": bool(row.get("uses_security_company")),
         f"{prefix}other_security": _safe_str(row.get("other_security")),
         f"{prefix}search_message": "",
+        f"{prefix}search_results": [],
+        f"{prefix}selected_search_idx": 0,
     }
 
-    selected_id = st.session_state.get("edit_state_bound_application_id")
-    if selected_id != application_id:
+    bound_id = st.session_state.get("edit_state_bound_application_id")
+    if bound_id != application_id:
         for key, value in defaults.items():
             st.session_state[key] = value
         st.session_state["edit_state_bound_application_id"] = application_id
@@ -716,8 +836,6 @@ def _render_application_edit_section(
     application_id = row.get("application_id")
     prefix = f"edit_{application_id}_"
 
-    _ensure_edit_state(row, station_options)
-
     current_business_type = _safe_str(row.get("business_type"))
     business_type_options = COMMON_BUSINESS_TYPES.copy()
     if current_business_type and current_business_type not in business_type_options:
@@ -733,8 +851,68 @@ def _render_application_edit_section(
     if current_station_label and current_station_label not in station_label_options:
         station_label_options.append(current_station_label)
 
+    _ensure_edit_state(row, station_label_options)
+
     st.markdown("#### 접수 정보 수정 / 삭제")
-    st.caption("주소 검색을 누르면 정식주소와 위도·경도가 자동 반영되고, 저장 후 지도 위치도 함께 바뀝니다.")
+    st.caption("설문지처럼 주소를 검색해서 정식주소를 선택하면 좌표와 지도 위치가 함께 바뀝니다.")
+
+    c_addr1, c_addr2 = st.columns([4, 1])
+    with c_addr1:
+        st.text_input("주소 검색어", key=f"{prefix}address_query")
+    with c_addr2:
+        search_clicked = st.button("주소 검색", key=f"{prefix}search_btn", use_container_width=True)
+
+    if search_clicked:
+        try:
+            query = _safe_str(st.session_state.get(f"{prefix}address_query"))
+            if not query:
+                st.session_state[f"{prefix}search_message"] = "주소 검색어를 먼저 입력해주세요."
+                st.session_state[f"{prefix}search_results"] = []
+            else:
+                results = _search_juso_addresses(query)
+                st.session_state[f"{prefix}search_results"] = results
+                st.session_state[f"{prefix}selected_search_idx"] = 0
+                if results:
+                    st.session_state[f"{prefix}search_message"] = f"검색 결과 {len(results)}건을 찾았습니다. 아래에서 주소를 선택해주세요."
+                else:
+                    st.session_state[f"{prefix}search_message"] = "검색 결과가 없습니다. 시/군/구와 도로명, 건물번호를 더 자세히 입력해주세요."
+            st.rerun()
+        except Exception as exc:
+            st.session_state[f"{prefix}search_results"] = []
+            st.session_state[f"{prefix}search_message"] = f"주소 검색 실패: {exc}"
+            st.rerun()
+
+    msg = _safe_str(st.session_state.get(f"{prefix}search_message"))
+    if msg:
+        st.caption(msg)
+
+    search_results = st.session_state.get(f"{prefix}search_results", []) or []
+    if search_results:
+        options = list(range(len(search_results)))
+        selected_idx = st.radio(
+            "주소 검색 결과",
+            options,
+            index=min(_safe_int(st.session_state.get(f"{prefix}selected_search_idx"), 0), len(options) - 1),
+            format_func=lambda i: (
+                f"{_safe_str(search_results[i].get('roadAddr'))} "
+                f"(지번: {_safe_str(search_results[i].get('jibunAddr')) or '-'})"
+            ),
+            key=f"{prefix}selected_search_idx",
+        )
+
+        if st.button("선택한 주소 반영", key=f"{prefix}apply_selected_address_btn", use_container_width=True):
+            try:
+                selected = search_results[selected_idx]
+                official_address, lat, lon = _resolve_candidate_to_address_and_coord(selected)
+                st.session_state[f"{prefix}resolved_address"] = official_address
+                st.session_state[f"{prefix}address_query"] = official_address
+                st.session_state[f"{prefix}latitude"] = float(lat)
+                st.session_state[f"{prefix}longitude"] = float(lon)
+                st.session_state[f"{prefix}search_message"] = "선택한 주소를 반영했습니다. 저장하면 지도 위치도 함께 변경됩니다."
+                st.rerun()
+            except Exception as exc:
+                st.session_state[f"{prefix}search_message"] = f"주소 반영 실패: {exc}"
+                st.rerun()
 
     c1, c2 = st.columns(2)
     with c1:
@@ -763,8 +941,7 @@ def _render_application_edit_section(
             index=station_label_options.index(st.session_state.get(f"{prefix}station_label", "")) if st.session_state.get(f"{prefix}station_label", "") in station_label_options else 0,
             key=f"{prefix}station_label",
         )
-        st.text_input("주소 검색어", key=f"{prefix}address_query")
-        st.text_input("정식주소", key=f"{prefix}resolved_address", disabled=True)
+        st.text_input("정식주소", key=f"{prefix}resolved_address")
         st.text_input("상세주소", key=f"{prefix}address_detail")
         st.number_input("위도", format="%.6f", key=f"{prefix}latitude")
         st.number_input("경도", format="%.6f", key=f"{prefix}longitude")
@@ -773,49 +950,18 @@ def _render_application_edit_section(
         st.checkbox("사설경비 이용 중", key=f"{prefix}uses_security_company")
         st.text_input("기타 방범시설", key=f"{prefix}other_security")
 
-    b1, b2 = st.columns([1, 2])
-    with b1:
-        if st.button("주소 검색 / 좌표 반영", key=f"{prefix}search_address_btn", use_container_width=True):
-            try:
-                query = _safe_str(st.session_state.get(f"{prefix}address_query"))
-                if not query:
-                    st.session_state[f"{prefix}search_message"] = "주소 검색어를 먼저 입력해주세요."
-                else:
-                    lat, lon, official_address = _geocode_address_vworld(query)
-                    if lat is None or lon is None:
-                        raise Exception("입력한 주소로 좌표를 찾지 못했습니다.")
-                    st.session_state[f"{prefix}resolved_address"] = official_address or query
-                    st.session_state[f"{prefix}latitude"] = float(lat)
-                    st.session_state[f"{prefix}longitude"] = float(lon)
-                    st.session_state[f"{prefix}search_message"] = "정식주소와 좌표를 반영했습니다."
-                st.rerun()
-            except Exception as exc:
-                st.session_state[f"{prefix}search_message"] = f"주소 검색 실패: {exc}"
-                st.rerun()
-    with b2:
-        msg = _safe_str(st.session_state.get(f"{prefix}search_message"))
-        if msg:
-            st.caption(msg)
-
     if st.button("상세정보 수정 저장", key=f"{prefix}save_btn", use_container_width=True):
         try:
-            address_query = _safe_str(st.session_state.get(f"{prefix}address_query"))
-            resolved_address = _safe_str(st.session_state.get(f"{prefix}resolved_address"))
-            address_detail = _safe_str(st.session_state.get(f"{prefix}address_detail"))
-
-            final_address = resolved_address or address_query
+            final_address = _safe_str(st.session_state.get(f"{prefix}resolved_address")) or _safe_str(st.session_state.get(f"{prefix}address_query"))
             lat_to_save = _safe_float(st.session_state.get(f"{prefix}latitude"), 0.0)
             lon_to_save = _safe_float(st.session_state.get(f"{prefix}longitude"), 0.0)
 
-            if address_query:
-                new_lat, new_lon, official_address = _geocode_address_vworld(address_query)
-                if new_lat is not None and new_lon is not None:
-                    lat_to_save = float(new_lat)
-                    lon_to_save = float(new_lon)
-                    final_address = official_address or address_query
-                    st.session_state[f"{prefix}resolved_address"] = final_address
-                    st.session_state[f"{prefix}latitude"] = lat_to_save
-                    st.session_state[f"{prefix}longitude"] = lon_to_save
+            if final_address and (not lat_to_save or not lon_to_save):
+                lat, lon, official = _coord_from_vworld(final_address)
+                if lat is not None and lon is not None:
+                    lat_to_save = lat
+                    lon_to_save = lon
+                    final_address = official or final_address
 
             update_payload = {
                 "applicant_name": _safe_str(st.session_state.get(f"{prefix}applicant_name")) or None,
@@ -826,7 +972,7 @@ def _render_application_edit_section(
                 "annual_sales": int(_safe_int(st.session_state.get(f"{prefix}annual_sales"), 0)),
                 "sales_band": _safe_str(st.session_state.get(f"{prefix}sales_band")) or None,
                 "address_road": final_address or None,
-                "address_detail": address_detail or None,
+                "address_detail": _safe_str(st.session_state.get(f"{prefix}address_detail")) or None,
                 "latitude": lat_to_save,
                 "longitude": lon_to_save,
                 "has_cctv": bool(st.session_state.get(f"{prefix}has_cctv")),
@@ -835,14 +981,12 @@ def _render_application_edit_section(
                 "other_security": _safe_str(st.session_state.get(f"{prefix}other_security")) or None,
                 "station_label": _safe_str(st.session_state.get(f"{prefix}station_label")),
             }
-
             _update_application(
                 supabase=supabase,
                 application_id=application_id,
                 station_map=station_map,
                 payload=update_payload,
             )
-
             st.success("상세정보가 수정되었습니다. 정식주소, 위도·경도, 지도 위치가 함께 반영되었습니다.")
             st.rerun()
         except Exception as exc:
