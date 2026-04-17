@@ -195,6 +195,32 @@ def _format_coord(value: Any) -> str:
     return f"{num:.6f}" if num else "-"
 
 
+def _felt_safety_score(row: Dict[str, Any]) -> int:
+    return max(0, min(40, _felt_safety_score(row)))
+
+
+def _cpo_risk_score(row: Dict[str, Any]) -> int:
+    risk_label = _safe_str(row.get("cpo_risk_label"))
+    if risk_label in CPO_RISK_OPTIONS:
+        return CPO_RISK_OPTIONS[risk_label]
+    return max(0, min(50, _cpo_risk_score(row)))
+
+
+def _security_vulnerability_score(row: Dict[str, Any]) -> int:
+    score = 0
+    if not bool(row.get("has_cctv")):
+        score += 4
+    if not bool(row.get("has_emergency_bell")):
+        score += 3
+    if not bool(row.get("uses_security_company")):
+        score += 3
+    return score
+
+
+def _total_score(row: Dict[str, Any]) -> int:
+    return _felt_safety_score(row) + _cpo_risk_score(row) + _security_vulnerability_score(row)
+
+
 def _unique_station_options(station_options: List[str]) -> List[str]:
     seen = set()
     result = []
@@ -467,7 +493,7 @@ def _apply_filters(
 
     result.sort(
         key=lambda x: (
-            -_safe_int(x.get("total_score"), 0),
+            -_total_score(x),
             _to_dt(x.get("submitted_at")) or datetime.min,
         ),
         reverse=False,
@@ -530,11 +556,11 @@ def _build_export_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
                 "비상벨": "있음" if bool(row.get("has_emergency_bell")) else "없음",
                 "사설경비": "이용 중" if bool(row.get("uses_security_company")) else "이용하지 않음",
                 "기타방범시설": _safe_str(row.get("other_security")),
-                "체감안전도": _safe_int(row.get("felt_safety_score"), 0),
+                "체감안전도": _felt_safety_score(row),
                 "CPO위험도등급": _safe_str(row.get("cpo_risk_label")),
-                "CPO위험도점수": _safe_int(row.get("cpo_risk_score"), 0),
-                "보안취약도": _safe_int(row.get("security_vulnerability_score"), 0),
-                "총점": _safe_int(row.get("total_score"), 0),
+                "CPO위험도점수": _cpo_risk_score(row),
+                "보안취약도": _security_vulnerability_score(row),
+                "총점": _total_score(row),
                 "우선순위제외": "예" if bool(row.get("is_excluded")) else "아니오",
                 "제외사유": _safe_str(row.get("exclude_reason")),
                 "검토메모": _safe_str(row.get("review_comment")),
@@ -571,7 +597,7 @@ def _sync_selected_row_by_selectbox(rows: List[Dict[str, Any]]):
                 "application_id": row.get("application_id"),
                 "label": (
                     f"{_safe_str(row.get('business_name'))} | {_safe_str(row.get('station_label')) or '-'} | "
-                    f"{_status_label(row.get('current_status'))} | 총점 {_safe_int(row.get('total_score'), 0)}점 | "
+                    f"{_status_label(row.get('current_status'))} | 총점 {_total_score(row)}점 | "
                     f"{_format_submitted_text(row.get('submitted_at'))}"
                 ),
             }
@@ -654,7 +680,7 @@ def _render_map(rows: List[Dict[str, Any]], selected_row: Optional[Dict[str, Any
             f"업종: {_display_business_type(row)}<br>"
             f"주소: {_full_address(row)}<br>"
             f"상태: {_status_label(row.get('current_status'))}<br>"
-            f"총점: {_safe_int(row.get('total_score'), 0)}점"
+            f"총점: {_total_score(row)}점"
         )
         tooltip = f"{_safe_str(row.get('business_name'))} / {_status_label(row.get('current_status'))}"
         icon_color = "red" if selected_row and row.get("application_id") == selected_row.get("application_id") else "blue"
@@ -687,8 +713,9 @@ def _render_score_guide():
 
 - **체감안전도(최대 40점)**: 신청 설문 응답을 바탕으로 자동 산출
 - **CPO 위험도(최대 50점)**: 현장 여건과 범죄 취약성을 고려하여 CPO가 직접 입력
-- **보안취약도(최대 10점)**: CCTV 미설치 +5점, 사설경비 미이용 +5점
+- **보안취약도(최대 10점)**: CCTV 미설치 +4점, 비상벨 미설치 +3점, 사설경비 미이용 +3점
 
+※ 총점은 100점 만점 기준으로 표시합니다.
 ※ 최종 지원 여부는 검토의견과 현장 상황을 함께 반영하여 결정합니다.
 """
         )
@@ -707,7 +734,7 @@ def _render_priority_table(rows: List[Dict[str, Any]]):
             continue
         filtered.append(row)
 
-    filtered.sort(key=lambda x: _safe_int(x.get("total_score"), 0), reverse=True)
+    filtered.sort(key=lambda x: _total_score(x), reverse=True)
     filtered = filtered[:top_n]
 
     table_rows = []
@@ -719,10 +746,10 @@ def _render_priority_table(rows: List[Dict[str, Any]]):
                 "신청인": _safe_str(row.get("applicant_name")),
                 "경찰서": _safe_str(row.get("station_label")),
                 "업종": _display_business_type(row),
-                "체감안전도": _safe_int(row.get("felt_safety_score"), 0),
-                "CPO위험도": _safe_int(row.get("cpo_risk_score"), 0),
-                "보안취약도": _safe_int(row.get("security_vulnerability_score"), 0),
-                "총점": _safe_int(row.get("total_score"), 0),
+                "체감안전도": _felt_safety_score(row),
+                "CPO위험도": _cpo_risk_score(row),
+                "보안취약도": _security_vulnerability_score(row),
+                "총점": _total_score(row),
                 "상태": _status_label(row.get("current_status")),
             }
         )
@@ -758,10 +785,10 @@ def _build_list_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
                 "주소": _full_address(row),
                 "위도": _format_coord(row.get("latitude")),
                 "경도": _format_coord(row.get("longitude")),
-                "체감안전도": _safe_int(row.get("felt_safety_score"), 0),
-                "CPO위험도": _safe_int(row.get("cpo_risk_score"), 0),
-                "보안취약도": _safe_int(row.get("security_vulnerability_score"), 0),
-                "총점": _safe_int(row.get("total_score"), 0),
+                "체감안전도": _felt_safety_score(row),
+                "CPO위험도": _cpo_risk_score(row),
+                "보안취약도": _security_vulnerability_score(row),
+                "총점": _total_score(row),
                 "상태": _status_label(row.get("current_status")),
             }
         )
@@ -804,10 +831,10 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
                 "주소": _full_address(row),
                 "위도": _format_coord(row.get("latitude")),
                 "경도": _format_coord(row.get("longitude")),
-                "체감안전도": _safe_int(row.get("felt_safety_score"), 0),
-                "CPO위험도": _safe_int(row.get("cpo_risk_score"), 0),
-                "보안취약도": _safe_int(row.get("security_vulnerability_score"), 0),
-                "총점": _safe_int(row.get("total_score"), 0),
+                "체감안전도": _felt_safety_score(row),
+                "CPO위험도": _cpo_risk_score(row),
+                "보안취약도": _security_vulnerability_score(row),
+                "총점": _total_score(row),
                 "상태": _status_label(row.get("current_status")),
             }
         )
@@ -993,9 +1020,9 @@ def _delete_application(supabase, application_id: Any):
 def _render_detail_summary_cards(row: Dict[str, Any]):
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("현재 상태", _status_label(row.get("current_status")) or "-")
-    c2.metric("체감안전도", f"{_safe_int(row.get('felt_safety_score'), 0)}점")
-    c3.metric("CPO위험도", f"{_safe_int(row.get('cpo_risk_score'), 0)}점")
-    c4.metric("총점", f"{_safe_int(row.get('total_score'), 0)}점")
+    c2.metric("체감안전도", f"{_felt_safety_score(row)}점")
+    c3.metric("CPO위험도", f"{_cpo_risk_score(row)}점")
+    c4.metric("총점", f"{_total_score(row)}점")
 
 
 def _ensure_edit_state(row: Dict[str, Any], station_options: List[str]):
@@ -1308,10 +1335,10 @@ def _render_detail(
 
     st.markdown("#### 자동 산출 점수")
     a1, a2, a3, a4 = st.columns(4)
-    a1.metric("체감안전도", f"{_safe_int(row.get('felt_safety_score'), 0)}점")
-    a2.metric("보안취약도", f"{_safe_int(row.get('security_vulnerability_score'), 0)}점")
-    a3.metric("CPO위험도", f"{_safe_int(row.get('cpo_risk_score'), 0)}점")
-    a4.metric("현재 총점", f"{_safe_int(row.get('total_score'), 0)}점")
+    a1.metric("체감안전도", f"{_felt_safety_score(row)}점")
+    a2.metric("보안취약도", f"{_security_vulnerability_score(row)}점")
+    a3.metric("CPO위험도", f"{_cpo_risk_score(row)}점")
+    a4.metric("현재 총점", f"{_total_score(row)}점")
 
     _render_application_edit_section(
         row=row,
