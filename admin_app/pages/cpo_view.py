@@ -1190,7 +1190,13 @@ def _render_application_edit_section(
         st.checkbox("사설경비 이용 중", key=f"{prefix}uses_security_company")
         st.text_input("기타 방범시설", key=f"{prefix}other_security")
 
-    if st.button("상세정보 수정 저장", key=f"{prefix}save_btn", use_container_width=True):
+    action_col1, action_col2 = st.columns(2)
+    with action_col1:
+        save_clicked = st.button("상세정보 수정 저장", key=f"{prefix}save_btn", use_container_width=True)
+    with action_col2:
+        delete_clicked = st.button("접수건 바로 삭제", key=f"delete_application_btn_{application_id}", use_container_width=True)
+
+    if save_clicked:
         try:
             final_address = _safe_str(st.session_state.get(f"{prefix}resolved_address")) or _safe_str(st.session_state.get(f"{prefix}address_query"))
             if not final_address:
@@ -1244,25 +1250,14 @@ def _render_application_edit_section(
         except Exception as exc:
             st.error(f"상세정보 수정 실패: {exc}")
 
-    with st.expander("접수건 삭제", expanded=False):
-        st.warning("삭제하면 해당 접수건과 관련 검토 이력이 함께 삭제됩니다.")
-        delete_confirm_text = st.text_input(
-            "삭제 확인 문구 입력",
-            value="",
-            placeholder="삭제",
-            key=f"delete_confirm_text_{application_id}",
-        )
-        if st.button("접수건 삭제 실행", key=f"delete_application_btn_{application_id}", use_container_width=True):
-            if delete_confirm_text != "삭제":
-                st.error("삭제하려면 확인 문구에 '삭제'를 정확히 입력해주세요.")
-            else:
-                try:
-                    _delete_application(supabase, application_id)
-                    st.session_state.pop("selected_application_id", None)
-                    st.success("접수건이 삭제되었습니다.")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"삭제 실패: {exc}")
+    if delete_clicked:
+        try:
+            _delete_application(supabase, application_id)
+            st.session_state.pop("selected_application_id", None)
+            st.success("접수건이 삭제되었습니다.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"삭제 실패: {exc}")
 
 def _render_detail(
     row: Dict[str, Any],
