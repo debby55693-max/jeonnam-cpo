@@ -9,6 +9,7 @@ st.set_page_config(
     page_title="소상공인 시스템",
     page_icon="🛡️",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
 
@@ -21,7 +22,52 @@ JEONNAM_POLICE_STATIONS = [
 ]
 
 
+def inject_base_css():
+    logged_in = bool(st.session_state.get("token"))
+
+    common_css = """
+    <style>
+    .block-container {
+        padding-top: 1.2rem !important;
+        padding-bottom: 2rem !important;
+    }
+
+    [data-testid="stSidebarNav"] {
+        display: none !important;
+    }
+
+    section[data-testid="stSidebar"] .css-1d391kg,
+    section[data-testid="stSidebar"] .css-1544g2n,
+    section[data-testid="stSidebar"] .css-1lcbmhc {
+        padding-top: 1rem !important;
+    }
+    </style>
+    """
+    st.markdown(common_css, unsafe_allow_html=True)
+
+    if not logged_in:
+        logged_out_css = """
+        <style>
+        section[data-testid="stSidebar"] {
+            display: none !important;
+        }
+
+        [data-testid="stSidebarCollapsedControl"] {
+            display: none !important;
+        }
+
+        .block-container {
+            padding-left: 2rem !important;
+            padding-right: 2rem !important;
+        }
+        </style>
+        """
+        st.markdown(logged_out_css, unsafe_allow_html=True)
+
+
 def main():
+    inject_base_css()
+
     auth_info = login_ui()
     if not auth_info:
         return
