@@ -65,6 +65,10 @@ document.addEventListener("DOMContentLoaded", function () {
     { area_name: "신안", station_label: "신안경찰서" }
   ];
 
+  function isMobileScreen() {
+    return window.innerWidth <= 768;
+  }
+
   function setResultMessage(message) {
     if (resultBox) resultBox.innerHTML = message;
   }
@@ -177,7 +181,6 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 
-  // 제출 완료/오류 팝업
   function ensureModalElement() {
     let modal = document.getElementById("submitCompleteModal");
     if (modal) return modal;
@@ -238,7 +241,7 @@ document.addEventListener("DOMContentLoaded", function () {
           <div id="addressSearchModalResultList" style="display:flex;flex-direction:column;gap:6px;min-height:80px;max-height:48vh;overflow-y:auto;"></div>
 
           <div id="addressSearchModalEmpty" style="display:none;padding:16px 12px;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc;color:#475569;text-align:center;line-height:1.6;font-size:12px;">
-          검색 결과가 없습니다.
+            검색 결과가 없습니다.
           </div>
 
           <div style="margin-top:10px;display:flex;justify-content:center;align-items:center;gap:5px;flex-wrap:wrap;">
@@ -838,18 +841,19 @@ document.addEventListener("DOMContentLoaded", function () {
     const zipNo = escapeHtml(item.zipNo || "");
 
     return `
-      <button type="button" data-address-index="${index}" style="width:100%;text-align:left;border:1px solid #dbe4f0;border-radius:10px;background:#ffffff;padding:10px 12px;cursor:pointer;transition:all .15s ease;">
-        <div style="font-size:13px;font-weight:800;color:#0f172a;line-height:1.5;">${roadAddr}</div>
-        <div style="margin-top:4px;font-size:11px;color:#64748b;line-height:1.5;">지번: ${jibunAddr || "-"}</div>
+      <button type="button" data-address-index="${index}" style="width:100%;text-align:left;border:1px solid #dbe4f0;border-radius:10px;background:#ffffff;padding:10px 12px;cursor:pointer;transition:all .15s ease;word-break:keep-all;overflow-wrap:anywhere;">
+        <div style="font-size:13px;font-weight:800;color:#0f172a;line-height:1.5;word-break:keep-all;overflow-wrap:anywhere;">${roadAddr}</div>
+        <div style="margin-top:4px;font-size:11px;color:#64748b;line-height:1.5;word-break:keep-all;overflow-wrap:anywhere;">지번: ${jibunAddr || "-"}</div>
         <div style="margin-top:2px;font-size:10px;color:#94a3b8;">우편번호: ${zipNo || "-"}</div>
       </button>
-  `  ;
-  } 
+    `;
+  }
 
   function closeAddressSearchModal() {
     const modal = document.getElementById("addressSearchModal");
     if (!modal) return;
     modal.style.display = "none";
+    document.body.style.overflow = "";
   }
 
   function bindAddressSearchModalEvents(apiKey, updateSelectedPoint) {
@@ -957,7 +961,11 @@ document.addEventListener("DOMContentLoaded", function () {
     nextBtn.style.cursor = nextBtn.disabled ? "not-allowed" : "pointer";
 
     pageButtonsEl.innerHTML = "";
-    for (let i = 1; i <= totalPages; i++) {
+
+    const startPage = Math.max(1, addressSearchState.page - 1);
+    const endPage = Math.min(totalPages, addressSearchState.page + 1);
+
+    for (let i = startPage; i <= endPage; i++) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = String(i);
@@ -970,6 +978,7 @@ document.addEventListener("DOMContentLoaded", function () {
       btn.style.fontWeight = "800";
       btn.style.fontSize = "11px";
       btn.style.cursor = addressSearchState.isLoading ? "not-allowed" : "pointer";
+
       if (i === addressSearchState.page) {
         btn.style.background = "#1f5aa8";
         btn.style.color = "#ffffff";
@@ -977,14 +986,17 @@ document.addEventListener("DOMContentLoaded", function () {
         btn.style.background = "#e2e8f0";
         btn.style.color = "#334155";
       }
+
       btn.onclick = function () {
         if (i === addressSearchState.page || addressSearchState.isLoading) return;
         const apiKey = window.APP_CONFIG?.VWORLD_API_KEY;
         searchAddressList(addressSearchState.keyword, i, apiKey, window.__updateSelectedPointRef);
       };
+
       pageButtonsEl.appendChild(btn);
     }
 
+    document.body.style.overflow = "hidden";
     modal.style.display = "flex";
   }
 
@@ -996,6 +1008,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     addressSearchState.keyword = String(keyword || "").trim();
     addressSearchState.page = page;
+    addressSearchState.countPerPage = isMobileScreen() ? 5 : 10;
     addressSearchState.isLoading = true;
     addressSearchState.results = [];
     renderAddressSearchModal();
