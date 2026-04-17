@@ -1,5 +1,8 @@
+from pathlib import Path
 import time
+
 import streamlit as st
+
 from core.supabase_client import get_supabase
 
 
@@ -126,69 +129,83 @@ def _render_logged_in_sidebar():
             st.rerun()
 
 
-def _render_logged_out_sidebar():
-    with st.sidebar:
-        st.subheader("🔐 로그인 안내")
-        st.caption("로그인은 가운데 화면에서 진행하세요.")
+def _find_login_logo_path() -> Path | None:
+    root = Path(__file__).resolve().parents[2]
+
+    candidates = [
+        root / "assets" / "login_slogan.png",
+        root / "assets" / "login_slogan.jpg",
+        root / "assets" / "login_slogan.jpeg",
+        root / "assets" / "고범석 청장님 슬로건(두 줄).png",
+        root / "admin_app" / "assets" / "login_slogan.png",
+        root / "admin_app" / "assets" / "고범석 청장님 슬로건(두 줄).png",
+    ]
+
+    for path in candidates:
+        if path.exists():
+            return path
+
+    return None
 
 
 def _render_login_main(error_message: str = ""):
     st.markdown(
         """
         <style>
-        .login-page-wrap {
-            min-height: 72vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .login-card {
-            width: 100%;
-            max-width: 520px;
-            margin: 0 auto;
-            padding: 2rem 1.6rem 1.6rem 1.6rem;
-            border: 1px solid rgba(49, 51, 63, 0.14);
-            border-radius: 20px;
-            background: #ffffff;
-            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.07);
-        }
         .login-title {
-            font-size: 2.2rem;
+            font-size: 2.4rem;
             font-weight: 800;
-            margin-bottom: 0.3rem;
+            margin: 0.4rem 0 0.25rem 0;
             text-align: center;
+            color: #1f2a44;
         }
         .login-desc {
-            color: #666;
-            margin-bottom: 1.2rem;
+            color: #666666;
+            margin-bottom: 1rem;
             text-align: center;
+            font-size: 1rem;
+        }
+        .login-card-box {
+            border: 1px solid rgba(49, 51, 63, 0.15);
+            border-radius: 22px;
+            padding: 1.45rem 1.35rem 1.2rem 1.35rem;
+            background: #ffffff;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.06);
+        }
+        .login-top-gap {
+            height: 0.2rem;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="login-page-wrap">', unsafe_allow_html=True)
-    left, center, right = st.columns([1, 1.25, 1])
+    st.markdown('<div class="login-top-gap"></div>', unsafe_allow_html=True)
+
+    left, center, right = st.columns([1.15, 1.7, 1.15])
 
     with center:
-        st.markdown('<div class="login-card">', unsafe_allow_html=True)
-        st.markdown('<div class="login-title">소상공인 시스템</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="login-desc">관리자 / CPO 계정으로 로그인해주세요.</div>',
-            unsafe_allow_html=True,
-        )
+        logo_path = _find_login_logo_path()
+        if logo_path:
+            st.image(str(logo_path), use_container_width=True)
 
-        if error_message:
-            st.error(error_message)
+        with st.container(border=False):
+            st.markdown('<div class="login-title">소상공인 시스템</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="login-desc">관리자 / CPO 계정으로 로그인해주세요.</div>',
+                unsafe_allow_html=True,
+            )
 
-        email = st.text_input("이메일", key="login_email_main")
-        password = st.text_input("비밀번호", type="password", key="login_password_main")
-        submit = st.button("로그인", key="login_submit_main", use_container_width=True)
+            if error_message:
+                st.error(error_message)
 
-        st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown('<div class="login-card-box">', unsafe_allow_html=True)
+            with st.form("login_form_main", clear_on_submit=False):
+                email = st.text_input("이메일", key="login_email_main")
+                password = st.text_input("비밀번호", type="password", key="login_password_main")
+                submit = st.form_submit_button("로그인", use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("</div>", unsafe_allow_html=True)
     return email, password, submit
 
 
@@ -200,7 +217,7 @@ def _friendly_login_error(exc: Exception) -> str:
         return (
             "로그인 실패: Supabase 인증 서버 응답이 잠시 불안정합니다. "
             "10~30초 뒤 다시 시도해주세요. 계속 반복되면 Streamlit Secrets의 "
-            "SUPABASE_URL / SUPABASE_ANON_KEY도 확인하세요."
+            "SUPABASE_URL / SUPABASE_ANON_KEY를 확인해주세요."
         )
 
     if "504" in lowered or "timeout" in lowered:
@@ -259,7 +276,6 @@ def login_ui():
             },
         }
 
-    _render_logged_out_sidebar()
     login_error = st.session_state.pop("login_error_message", "")
     email, password, submit = _render_login_main(login_error)
 
