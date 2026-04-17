@@ -1,3 +1,4 @@
+import time
 import streamlit as st
 from core.supabase_client import get_supabase
 
@@ -34,7 +35,7 @@ def _load_station_label(supabase, station_id):
         row = resp.data[0] if resp.data else None
         if not row:
             return ""
-        return (row.get("station_label") or "").strip()
+        return (row.get("station_label") or row.get("station_name") or "").strip()
     except Exception:
         return ""
 
@@ -108,79 +109,199 @@ def _ensure_profile_in_session(supabase):
     _set_profile_session(profile)
 
 
+def _render_logged_in_sidebar():
+    with st.sidebar:
+        st.subheader("🔐 로그인")
+        st.success(f"로그인됨: {st.session_state.get('email')}")
+        st.write(f"관서: {st.session_state.get('station') or '-'}")
+        st.write(f"권한: {st.session_state.get('role') or '-'}")
+
+        st.markdown("---")
+
+        if st.button("🔄 화면 새로고침(로그인 유지)", use_container_width=True):
+            st.rerun()
+
+        if st.button("🚪 로그아웃", use_container_width=True):
+            st.session_state.clear()
+            st.rerun()
+
+
+def _render_logged_out_sidebar():
+    with st.sidebar:
+        st.subheader("🔐 로그인 안내")
+        st.caption("로그인은 가운데 화면에서 진행하세요.")
+
+
+def _render_login_main(error_message: str = ""):
+    st.markdown(
+        """
+        <style>
+        .login-page-wrap {
+            min-height: 72vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-card {
+            width: 100%;
+            max-width: 520px;
+            margin: 0 auto;
+            padding: 2rem 1.6rem 1.6rem 1.6rem;
+            border: 1px solid rgba(49, 51, 63, 0.14);
+            border-radius: 20px;
+            background: #ffffff;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.07);
+        }
+        .login-title {
+            font-size: 2.2rem;
+            font-weight: 800;
+            margin-bottom: 0.3rem;
+            text-align: center;
+        }
+        .login-desc {
+            color: #666;
+            margin-bottom: 1.2rem;
+            text-align: center;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="login-page-wrap">', unsafe_allow_html=True)
+    left, center, right = st.columns([1, 1.25, 1])
+
+    with center:
+        st.markdown('<div class="login-card">', unsafe_allow_html=True)
+        st.markdown('<div class="login-title">소상공인 시스템</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="login-desc">관리자 / CPO 계정으로 로그인해주세요.</div>',
+            unsafe_allow_html=True,
+        )
+
+        if error_message:
+            st.error(error_message)
+
+        email = st.text_input("이메일", key="login_email_main")
+        password = st.text_input("비밀번호", type="password", key="login_password_main")
+        submit = st.button("로그인", key="login_submit_main", use_container_width=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+    return email, password, submit
+
+
+def _friendly_login_error(exc: Exception) -> str:
+    raw = str(exc)
+    lowered = raw.lower()
+
+    if "502" in lowered or "bad gateway" in lowered:
+        return (
+            "로그인 실패: Supabase 인증 서버 응답이 잠시 불안정합니다. "
+            "10~30초 뒤 다시 시도해주세요. 계속 반복되면 Streamlit Secrets의 "
+            "SUPABASE_URL / SUPABASE_ANON_KEY도 확인하세요."
+        )
+
+    if "504" in lowered or "timeout" in lowered:
+        return "로그인 실패: 인증 응답이 지연되었습니다. 잠시 후 다시 시도해주세요."
+
+    if "invalid login credentials" in lowered:
+        return "로그인 실패: 이메일 또는 비밀번호가 맞지 않습니다."
+
+    if "email not confirmed" in lowered:
+        return "로그인 실패: 이메일 인증이 완료되지 않은 계정입니다."
+
+    return f"로그인 실패: {raw}"
+
+
+def _sign_in_with_retry(supabase, email: str, password: str, retries: int = 3, wait_sec: float = 1.2):
+    last_error = None
+
+    for attempt in range(retries):
+        try:
+            return supabase.auth.sign_in_with_password(
+                {"email": email, "password": password}
+            )
+        except Exception as exc:
+            last_error = exc
+            lowered = str(exc).lower()
+            is_retryable = (
+                "502" in lowered
+                or "bad gateway" in lowered
+                or "504" in lowered
+                or "timeout" in lowered
+            )
+
+            if attempt < retries - 1 and is_retryable:
+                time.sleep(wait_sec)
+                continue
+
+            raise last_error
+
+
 def login_ui():
     supabase = get_supabase()
 
     if st.session_state.get("token"):
         _apply_auth_to_postgrest(supabase, st.session_state["token"])
         _ensure_profile_in_session(supabase)
+        _render_logged_in_sidebar()
+        return {
+            "access_token": st.session_state.get("token"),
+            "user": {
+                "id": st.session_state.get("uid"),
+                "email": st.session_state.get("email"),
+                "role": st.session_state.get("role"),
+                "station": st.session_state.get("station"),
+                "station_id": st.session_state.get("station_id"),
+                "full_name": st.session_state.get("full_name"),
+            },
+        }
 
-    with st.sidebar:
-        st.subheader("🔐 로그인")
+    _render_logged_out_sidebar()
+    login_error = st.session_state.pop("login_error_message", "")
+    email, password, submit = _render_login_main(login_error)
 
-        if st.session_state.get("token"):
-            st.success(f"로그인됨: {st.session_state.get('email')}")
-            st.write(f"관서: {st.session_state.get('station') or '-'}")
-            st.write(f"권한: {st.session_state.get('role') or '-'}")
+    if submit:
+        if not email or not password:
+            st.session_state["login_error_message"] = "로그인 실패: 이메일과 비밀번호를 모두 입력해주세요."
+            st.rerun()
 
-            st.markdown("---")
-            if st.button("🔄 화면 새로고침(로그인 유지)"):
-                st.rerun()
+        try:
+            auth = _sign_in_with_retry(supabase, email, password)
 
-            if st.button("🚪 로그아웃"):
-                st.session_state.clear()
-                st.rerun()
+            user = auth.user
+            session = auth.session
 
-            return {
-                "access_token": st.session_state.get("token"),
-                "user": {
-                    "id": st.session_state.get("uid"),
-                    "email": st.session_state.get("email"),
-                    "role": st.session_state.get("role"),
-                    "station": st.session_state.get("station"),
-                    "station_id": st.session_state.get("station_id"),
-                    "full_name": st.session_state.get("full_name"),
-                },
-            }
+            st.session_state["token"] = session.access_token
+            st.session_state["uid"] = user.id
+            st.session_state["email"] = user.email
+            st.session_state["refresh_token"] = getattr(session, "refresh_token", None)
 
-        email = st.text_input("이메일")
-        password = st.text_input("비밀번호", type="password")
+            _apply_auth_to_postgrest(supabase, session.access_token)
 
-        if st.button("로그인"):
-            try:
-                auth = supabase.auth.sign_in_with_password(
-                    {"email": email, "password": password}
-                )
+            profile = _load_profile_by_uid(supabase, user.id)
+            if not profile:
+                raise Exception("profiles 테이블에 사용자 프로필이 없습니다. Auth 계정 생성 후 profiles 매핑을 확인하세요.")
 
-                user = auth.user
-                session = auth.session
+            if profile.get("is_active") is False:
+                raise Exception("비활성화된 계정입니다. 관리자에게 문의하세요.")
 
-                st.session_state["token"] = session.access_token
-                st.session_state["uid"] = user.id
-                st.session_state["email"] = user.email
-                st.session_state["refresh_token"] = getattr(session, "refresh_token", None)
+            role = profile.get("role", "cpo")
+            if role not in ["admin", "cpo"]:
+                raise Exception("profiles.role 값이 올바르지 않습니다. admin 또는 cpo로 맞춰주세요.")
 
-                _apply_auth_to_postgrest(supabase, session.access_token)
+            station = profile.get("station") or ""
+            if role == "cpo" and station not in JEONNAM_POLICE_STATIONS:
+                raise Exception("CPO 계정은 profiles.station_id가 올바른 경찰서로 매핑되어 있어야 합니다.")
 
-                profile = _load_profile_by_uid(supabase, user.id)
-                if not profile:
-                    raise Exception("profiles 테이블에 사용자 프로필이 없습니다. Auth 계정 생성 후 profiles 매핑을 확인하세요.")
+            _set_profile_session(profile)
+            st.session_state.pop("login_error_message", None)
+            st.rerun()
 
-                if profile.get("is_active") is False:
-                    raise Exception("비활성화된 계정입니다. 관리자에게 문의하세요.")
+        except Exception as e:
+            st.session_state["login_error_message"] = _friendly_login_error(e)
+            st.rerun()
 
-                role = profile.get("role", "cpo")
-                if role not in ["admin", "cpo"]:
-                    raise Exception("profiles.role 값이 올바르지 않습니다. admin 또는 cpo로 맞춰주세요.")
-
-                station = profile.get("station") or ""
-                if role == "cpo" and station not in JEONNAM_POLICE_STATIONS:
-                    raise Exception("CPO 계정은 profiles.station_id가 올바른 경찰서로 매핑되어 있어야 합니다.")
-
-                _set_profile_session(profile)
-                st.success("로그인 성공")
-                st.rerun()
-            except Exception as e:
-                st.error(f"로그인 실패: {e}")
-
-        return None
+    return None

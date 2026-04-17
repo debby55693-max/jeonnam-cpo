@@ -24,8 +24,6 @@ JEONNAM_POLICE_STATIONS = [
 def main():
     auth_info = login_ui()
     if not auth_info:
-        st.title("소상공인 시스템")
-        st.info("왼쪽 사이드바에서 로그인해주세요.")
         return
 
     role = st.session_state.get("role", "")
@@ -46,17 +44,11 @@ def main():
         st.error("로그인 토큰이 없습니다. 다시 로그인해주세요.")
         return
 
-    # 중요:
-    # anon 클라이언트가 아니라 로그인한 사용자의 access token이 반영된
-    # 인증 클라이언트를 사용해야 cpo_reviews insert/update 시 RLS를 통과할 수 있음
     supabase = get_authed_client(
         access_token=access_token,
         refresh_token=refresh_token,
     )
 
-    # admin도 동일한 관리화면을 사용하되,
-    # admin은 전체/관서별 조회가 가능하고
-    # cpo는 본인 관서만 보게 한다.
     cpo_page(
         supabase=supabase,
         role=role,
