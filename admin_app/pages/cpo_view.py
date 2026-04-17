@@ -196,14 +196,14 @@ def _format_coord(value: Any) -> str:
 
 
 def _felt_safety_score(row: Dict[str, Any]) -> int:
-    return max(0, min(40, _felt_safety_score(row)))
+    return max(0, min(40, _safe_int(row.get("felt_safety_score"), 0)))
 
 
 def _cpo_risk_score(row: Dict[str, Any]) -> int:
     risk_label = _safe_str(row.get("cpo_risk_label"))
     if risk_label in CPO_RISK_OPTIONS:
         return CPO_RISK_OPTIONS[risk_label]
-    return max(0, min(50, _cpo_risk_score(row)))
+    return max(0, min(50, _safe_int(row.get("cpo_risk_score"), 0)))
 
 
 def _security_vulnerability_score(row: Dict[str, Any]) -> int:
@@ -534,38 +534,28 @@ def _build_export_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
     for row in rows:
         data.append(
             {
-                "접수일시": _format_submitted_text(row.get("submitted_at")),
-                "상태": _status_label(row.get("current_status")),
-                "경찰서": _safe_str(row.get("station_label")),
                 "점포명": _safe_str(row.get("business_name")),
                 "신청인": _safe_str(row.get("applicant_name")),
                 "연락처": _safe_str(row.get("phone")),
+                "경찰서": _safe_str(row.get("station_label")),
                 "업종": _display_business_type(row),
-                "정식주소": _safe_str(row.get("address_road")),
-                "상세주소": _safe_str(row.get("address_detail")),
-                "전체주소": _full_address(row),
+                "주소": _full_address(row),
                 "위도": _safe_float(row.get("latitude"), 0.0),
                 "경도": _safe_float(row.get("longitude"), 0.0),
                 "연매출구간": _safe_str(row.get("sales_band")),
-                "연매출(원)": _safe_int(row.get("annual_sales"), 0),
-                "범죄불안경험": _safe_str(row.get("survey_crime_anxiety")),
-                "야간영업여부": _safe_str(row.get("survey_late_night")),
-                "주변환경": _safe_str(row.get("survey_dark_area")),
-                "단독근무": _safe_str(row.get("survey_single_worker")),
+                "연매출": _safe_int(row.get("annual_sales"), 0),
+                "체감안전도": _felt_safety_score(row),
+                "CPO위험도": _cpo_risk_score(row),
+                "보안취약도": _security_vulnerability_score(row),
+                "총점": _total_score(row),
+                "상태": _status_label(row.get("current_status")),
                 "점포내CCTV": "있음" if bool(row.get("has_cctv")) else "없음",
                 "비상벨": "있음" if bool(row.get("has_emergency_bell")) else "없음",
                 "사설경비": "이용 중" if bool(row.get("uses_security_company")) else "이용하지 않음",
-                "기타방범시설": _safe_str(row.get("other_security")),
-                "체감안전도": _felt_safety_score(row),
-                "CPO위험도등급": _safe_str(row.get("cpo_risk_label")),
-                "CPO위험도점수": _cpo_risk_score(row),
-                "보안취약도": _security_vulnerability_score(row),
-                "총점": _total_score(row),
-                "우선순위제외": "예" if bool(row.get("is_excluded")) else "아니오",
-                "제외사유": _safe_str(row.get("exclude_reason")),
+                "접수일시": _format_submitted_text(row.get("submitted_at")),
                 "검토메모": _safe_str(row.get("review_comment")),
-                "추가서류요청내용": _safe_str(row.get("docs_request_comment")),
-                "신청사유": _safe_str(row.get("apply_reason")),
+                "추가서류요청": _safe_str(row.get("docs_request_comment")),
+                "제외사유": _safe_str(row.get("exclude_reason")),
             }
         )
     return pd.DataFrame(data)
@@ -624,23 +614,6 @@ def _sync_selected_row_by_selectbox(rows: List[Dict[str, Any]]):
     if selected_id != current_id:
         st.session_state["selected_application_id"] = selected_id
         st.rerun()
-
-
-def _extract_selected_indexes(event: Any) -> List[int]:
-    try:
-        selection = getattr(event, "selection", None)
-        if selection is None and isinstance(event, dict):
-            selection = event.get("selection")
-        if selection is None:
-            return []
-        rows = getattr(selection, "rows", None)
-        if rows is not None:
-            return list(rows)
-        if isinstance(selection, dict):
-            return list(selection.get("rows", []) or [])
-    except Exception:
-        return []
-    return []
 
 
 def _render_map(rows: List[Dict[str, Any]], selected_row: Optional[Dict[str, Any]]):
@@ -715,7 +688,6 @@ def _render_score_guide():
 - **CPO 위험도(최대 50점)**: 현장 여건과 범죄 취약성을 고려하여 CPO가 직접 입력
 - **보안취약도(최대 10점)**: CCTV 미설치 +4점, 비상벨 미설치 +3점, 사설경비 미이용 +3점
 
-※ 총점은 100점 만점 기준으로 표시합니다.
 ※ 최종 지원 여부는 검토의견과 현장 상황을 함께 반영하여 결정합니다.
 """
         )
@@ -768,32 +740,6 @@ def _render_top_metrics(rows: List[Dict[str, Any]]):
     c3.metric("제외", f"{counts['제외']}건")
     c4.metric("선정", f"{counts['선정']}건")
     c5.metric("미검토", f"{counts['미검토']}건")
-
-
-def _build_list_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
-    table_rows = []
-    for idx, row in enumerate(rows, start=1):
-        table_rows.append(
-            {
-                "번호": idx,
-                "점포명": _safe_str(row.get("business_name")),
-                "신청인": _safe_str(row.get("applicant_name")),
-                "연락처": _safe_str(row.get("phone")),
-                "업종": _display_business_type(row),
-                "경찰서": _safe_str(row.get("station_label")),
-                "접수일시": _format_submitted_text(row.get("submitted_at")),
-                "주소": _full_address(row),
-                "위도": _format_coord(row.get("latitude")),
-                "경도": _format_coord(row.get("longitude")),
-                "체감안전도": _felt_safety_score(row),
-                "CPO위험도": _cpo_risk_score(row),
-                "보안취약도": _security_vulnerability_score(row),
-                "총점": _total_score(row),
-                "상태": _status_label(row.get("current_status")),
-            }
-        )
-    return pd.DataFrame(table_rows)
-
 
 
 def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
@@ -895,53 +841,6 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
     return checked_ids
 
 
-def _render_download_selector(rows: List[Dict[str, Any]]) -> List[Any]:
-    if not rows:
-        return []
-
-    visible_ids = [row.get("application_id") for row in rows]
-    stored_ids = st.session_state.get("download_selected_application_ids", [])
-    stored_ids = [x for x in stored_ids if x in visible_ids]
-    st.session_state["download_selected_application_ids"] = stored_ids
-
-    selector_rows = []
-    for idx, row in enumerate(rows, start=1):
-        app_id = row.get("application_id")
-        selector_rows.append(
-            {
-                "다운로드": app_id in stored_ids,
-                "_application_id": app_id,
-                "번호": idx,
-                "점포명": _safe_str(row.get("business_name")),
-                "신청인": _safe_str(row.get("applicant_name")),
-                "경찰서": _safe_str(row.get("station_label")),
-                "접수일시": _format_submitted_text(row.get("submitted_at")),
-                "주소": _full_address(row),
-                "상태": _status_label(row.get("current_status")),
-            }
-        )
-
-    editor_df = pd.DataFrame(selector_rows)
-    edited_df = st.data_editor(
-        editor_df,
-        use_container_width=True,
-        hide_index=True,
-        disabled=["_application_id", "번호", "점포명", "신청인", "경찰서", "접수일시", "주소", "상태"],
-        column_config={
-            "_application_id": None,
-            "다운로드": st.column_config.CheckboxColumn(
-                "다운로드",
-                help="체크한 점포만 별도 다운로드할 수 있습니다.",
-            ),
-        },
-        key="download_target_editor",
-    )
-
-    checked_ids = edited_df.loc[edited_df["다운로드"] == True, "_application_id"].tolist()
-    st.session_state["download_selected_application_ids"] = checked_ids
-    return checked_ids
-
-
 def _save_review(
     supabase,
     row: Dict[str, Any],
@@ -957,23 +856,8 @@ def _save_review(
     application_id = row.get("application_id")
     if not application_id:
         raise Exception("application_id가 없습니다.")
-    if not reviewer_id:
-        raise Exception("로그인 사용자 정보가 없습니다. 다시 로그인해주세요.")
 
-    risk_label = _safe_str(risk_label) or "미입력"
-    review_status_label = _safe_str(review_status_label) or "검토완료"
-    effective_excluded = bool(exclude_flag) or review_status_label == "제외"
-    exclude_reason = _safe_str(exclude_reason)
-    review_comment = _safe_str(review_comment)
-    docs_request_comment = _safe_str(docs_request_comment)
-
-    if effective_excluded and not exclude_reason:
-        raise Exception("제외 대상으로 저장하려면 제외 사유를 입력해주세요.")
-
-    if review_status_label == "추가서류요청" and not docs_request_comment:
-        raise Exception("추가서류요청으로 저장하려면 요청 내용을 입력해주세요.")
-
-    review_result = _review_status_value(review_status_label, effective_excluded)
+    review_result = _review_status_value(review_status_label, exclude_flag)
     payload = {
         "application_id": application_id,
         "reviewer_id": reviewer_id,
@@ -981,10 +865,10 @@ def _save_review(
         "review_result": review_result,
         "cpo_risk_label": risk_label,
         "cpo_risk_score": CPO_RISK_OPTIONS.get(risk_label, 0),
-        "is_excluded": effective_excluded,
-        "exclude_reason": exclude_reason,
-        "review_comment": review_comment,
-        "docs_request_comment": docs_request_comment,
+        "is_excluded": bool(exclude_flag),
+        "exclude_reason": _safe_str(exclude_reason),
+        "review_comment": _safe_str(review_comment),
+        "docs_request_comment": _safe_str(docs_request_comment),
         "reviewed_at": datetime.now().isoformat(),
     }
 
@@ -996,18 +880,27 @@ def _update_application(
     supabase,
     application_id: Any,
     station_map: Dict[str, Any],
+    station_options: List[str],
     payload: Dict[str, Any],
 ):
     if not application_id:
         raise Exception("application_id가 없습니다.")
 
     station_label = _safe_str(payload.pop("station_label", ""))
-    if station_label:
-        payload["station_id"] = station_map.get(station_label)
+    address_road = _safe_str(payload.get("address_road"))
+    inferred_station_label = _infer_station_label_from_address(address_road, station_options)
+    final_station_label = inferred_station_label or station_label
+
+    if final_station_label:
+        station_id = station_map.get(final_station_label)
+        if not station_id:
+            raise Exception(f"관할 경찰서 '{final_station_label}'의 station_id를 찾지 못했습니다.")
+        payload["station_id"] = station_id
     else:
         payload["station_id"] = None
 
     supabase.table("applications").update(payload).eq("id", application_id).execute()
+    return final_station_label
 
 
 def _delete_application(supabase, application_id: Any):
@@ -1064,7 +957,6 @@ def _ensure_edit_state(row: Dict[str, Any], station_options: List[str]):
         for key, value in defaults.items():
             if key not in st.session_state:
                 st.session_state[key] = value
-
 
 
 def _render_application_edit_section(
@@ -1152,19 +1044,15 @@ def _render_application_edit_section(
                     selected = search_results[selected_idx]
                     chosen_address, lat, lon = _resolve_candidate_to_address_and_coord(selected)
                     inferred_station_label = _infer_station_label_from_address(chosen_address, station_label_options)
+                    st.session_state[f"{prefix}search_message"] = "선택한 주소를 반영했습니다. 저장하면 지도 위치도 함께 변경됩니다."
+                    st.session_state[f"{prefix}search_results"] = search_results
+                    st.session_state[f"{prefix}selected_search_idx"] = selected_idx
+                    st.session_state[f"{prefix}address_query"] = chosen_address
                     st.session_state[f"{prefix}resolved_address"] = chosen_address
                     st.session_state[f"{prefix}latitude"] = float(lat)
                     st.session_state[f"{prefix}longitude"] = float(lon)
-                    st.session_state[f"{prefix}station_label"] = inferred_station_label
                     if inferred_station_label:
-                        st.session_state[f"{prefix}search_message"] = (
-                            f"선택한 주소를 반영했습니다. 관할 경찰서는 {inferred_station_label}로 자동 설정되었습니다."
-                        )
-                    else:
-                        st.session_state[f"{prefix}search_message"] = (
-                            "선택한 주소를 반영했지만 관할 경찰서를 자동 판별하지 못했습니다. "
-                            "다른 검색 결과를 선택해주세요."
-                        )
+                        st.session_state[f"{prefix}station_label"] = inferred_station_label
                     st.rerun()
                 except Exception as exc:
                     st.session_state[f"{prefix}search_message"] = f"주소 반영 실패: {exc}"
@@ -1205,10 +1093,11 @@ def _render_application_edit_section(
         )
 
     with c2:
-        st.text_input(
-            "관할 경찰서(주소 기준 자동반영)",
-            value=_safe_str(st.session_state.get(f"{prefix}station_label")),
-            disabled=True,
+        st.selectbox(
+            "관할 경찰서",
+            station_label_options,
+            index=station_label_options.index(st.session_state.get(f"{prefix}station_label", "")) if st.session_state.get(f"{prefix}station_label", "") in station_label_options else 0,
+            key=f"{prefix}station_label",
         )
         st.number_input("위도", format="%.6f", key=f"{prefix}latitude")
         st.number_input("경도", format="%.6f", key=f"{prefix}longitude")
@@ -1217,34 +1106,30 @@ def _render_application_edit_section(
         st.checkbox("사설경비 이용 중", key=f"{prefix}uses_security_company")
         st.text_input("기타 방범시설", key=f"{prefix}other_security")
 
-    action_col1, action_col2 = st.columns(2)
-    with action_col1:
+    b1, b2 = st.columns(2)
+
+    with b1:
         save_clicked = st.button("상세정보 수정 저장", key=f"{prefix}save_btn", use_container_width=True)
-    with action_col2:
+
+    with b2:
         delete_clicked = st.button("접수건 바로 삭제", key=f"delete_application_btn_{application_id}", use_container_width=True)
 
     if save_clicked:
         try:
             final_address = _safe_str(st.session_state.get(f"{prefix}resolved_address")) or _safe_str(st.session_state.get(f"{prefix}address_query"))
-            if not final_address:
-                raise Exception("정식 주소가 없습니다. 주소 검색 후 결과를 선택해주세요.")
-
             lat_to_save = _safe_float(st.session_state.get(f"{prefix}latitude"), 0.0)
             lon_to_save = _safe_float(st.session_state.get(f"{prefix}longitude"), 0.0)
 
-            if not lat_to_save or not lon_to_save:
+            if final_address and (not lat_to_save or not lon_to_save):
                 lat, lon, official = _coord_from_vworld(final_address)
                 if lat is not None and lon is not None:
                     lat_to_save = lat
                     lon_to_save = lon
                     final_address = official or final_address
 
-            if not lat_to_save or not lon_to_save:
-                raise Exception("선택한 주소의 좌표를 확인하지 못했습니다. 주소 검색 결과를 다시 선택해주세요.")
-
             inferred_station_label = _infer_station_label_from_address(final_address, station_label_options)
-            if not inferred_station_label:
-                raise Exception("정식 주소 기준으로 관할 경찰서를 자동 판별하지 못했습니다. 주소 검색 결과를 다시 선택해주세요.")
+            manual_station_label = _safe_str(st.session_state.get(f"{prefix}station_label"))
+            final_station_label = inferred_station_label or manual_station_label
 
             update_payload = {
                 "applicant_name": _safe_str(st.session_state.get(f"{prefix}applicant_name")) or None,
@@ -1256,23 +1141,22 @@ def _render_application_edit_section(
                 "sales_band": _safe_str(st.session_state.get(f"{prefix}sales_band")) or None,
                 "address_road": final_address or None,
                 "address_detail": _safe_str(st.session_state.get(f"{prefix}address_detail")) or None,
-                "latitude": float(lat_to_save),
-                "longitude": float(lon_to_save),
+                "latitude": lat_to_save,
+                "longitude": lon_to_save,
                 "has_cctv": bool(st.session_state.get(f"{prefix}has_cctv")),
                 "has_emergency_bell": bool(st.session_state.get(f"{prefix}has_emergency_bell")),
                 "uses_security_company": bool(st.session_state.get(f"{prefix}uses_security_company")),
                 "other_security": _safe_str(st.session_state.get(f"{prefix}other_security")) or None,
-                "station_label": inferred_station_label,
+                "station_label": final_station_label,
             }
-            _update_application(
+            final_station_label = _update_application(
                 supabase=supabase,
                 application_id=application_id,
                 station_map=station_map,
+                station_options=station_label_options,
                 payload=update_payload,
             )
-            st.success(
-                f"상세정보가 수정되었습니다. 주소, 좌표, 지도 위치, 관할 경찰서가 {inferred_station_label} 기준으로 함께 반영되었습니다."
-            )
+            st.success(f"상세정보가 수정되었습니다. 관할 경찰서는 '{final_station_label or '-'}'로 반영되었습니다.")
             st.rerun()
         except Exception as exc:
             st.error(f"상세정보 수정 실패: {exc}")
@@ -1281,10 +1165,14 @@ def _render_application_edit_section(
         try:
             _delete_application(supabase, application_id)
             st.session_state.pop("selected_application_id", None)
+            st.session_state.pop("selected_application_selectbox", None)
+            checked_ids = st.session_state.get("list_checked_application_ids", [])
+            st.session_state["list_checked_application_ids"] = [x for x in checked_ids if x != application_id]
             st.success("접수건이 삭제되었습니다.")
             st.rerun()
         except Exception as exc:
             st.error(f"삭제 실패: {exc}")
+
 
 def _render_detail(
     row: Dict[str, Any],
@@ -1506,7 +1394,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
             disabled=all_export_df.empty,
         )
 
-    checked_ids = _render_list_table(filtered_rows)
+    _render_list_table(filtered_rows)
 
     st.markdown("### 접수 현황 지도")
     selected_row = _selected_row(filtered_rows)
