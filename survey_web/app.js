@@ -177,6 +177,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 
+  // 제출 완료/오류 팝업
   function ensureModalElement() {
     let modal = document.getElementById("submitCompleteModal");
     if (modal) return modal;
@@ -189,9 +190,40 @@ document.addEventListener("DOMContentLoaded", function () {
     modal.style.display = "none";
     modal.style.alignItems = "center";
     modal.style.justifyContent = "center";
-    modal.style.padding = "10px";
+    modal.style.padding = "20px";
     modal.style.zIndex = "99999";
 
+    modal.innerHTML = `
+      <div style="width:100%;max-width:520px;background:#ffffff;border-radius:18px;box-shadow:0 20px 45px rgba(15,23,42,0.22);overflow:hidden;border:1px solid #dbe4f0;">
+        <div id="submitCompleteModalHeader" style="padding:18px 22px;background:#eef4ff;border-bottom:1px solid #d7e5ff;">
+          <div id="submitCompleteModalTitle" style="font-size:22px;font-weight:800;color:#1d4ed8;">신청이 정상적으로 접수되었습니다.</div>
+        </div>
+        <div style="padding:22px;">
+          <div id="submitCompleteModalBody" style="font-size:15px;line-height:1.9;color:#334155;"></div>
+          <button id="submitCompleteModalConfirm" type="button" style="margin-top:20px;width:100%;height:48px;border:none;border-radius:12px;background:#1f5aa8;color:#ffffff;font-size:16px;font-weight:800;cursor:pointer;">확인</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+    return modal;
+  }
+
+  // 주소 검색 결과 팝업
+  function ensureAddressSearchModal() {
+    let modal = document.getElementById("addressSearchModal");
+    if (modal) return modal;
+
+    modal = document.createElement("div");
+    modal.id = "addressSearchModal";
+    modal.style.position = "fixed";
+    modal.style.inset = "0";
+    modal.style.background = "rgba(15, 23, 42, 0.45)";
+    modal.style.display = "none";
+    modal.style.alignItems = "center";
+    modal.style.justifyContent = "center";
+    modal.style.padding = "10px";
+    modal.style.zIndex = "99998";
 
     modal.innerHTML = `
       <div style="width:100%;max-width:430px;background:#ffffff;border-radius:16px;box-shadow:0 16px 32px rgba(15,23,42,0.18);overflow:hidden;border:1px solid #dbe4f0;">
@@ -211,57 +243,6 @@ document.addEventListener("DOMContentLoaded", function () {
             <button id="addressNextPageBtn" type="button" style="height:36px;border:none;border-radius:10px;background:#e2e8f0;color:#334155;padding:0 12px;font-weight:700;cursor:pointer;font-size:13px;">다음</button>
           </div>
           <button id="addressSearchModalCloseBottom" type="button" style="margin-top:14px;width:100%;height:42px;border:none;border-radius:12px;background:#1f5aa8;color:#ffffff;font-size:14px;font-weight:800;cursor:pointer;">닫기</button>
-        </div>
-      </div>
-`   ;
-
-
-
-
-
-
-
-
-
-
-
-    document.body.appendChild(modal);
-    return modal;
-  }
-
-  function ensureAddressSearchModal() {
-    let modal = document.getElementById("addressSearchModal");
-    if (modal) return modal;
-
-    modal = document.createElement("div");
-    modal.id = "addressSearchModal";
-    modal.style.position = "fixed";
-    modal.style.inset = "0";
-    modal.style.background = "rgba(15, 23, 42, 0.45)";
-    modal.style.display = "none";
-    modal.style.alignItems = "center";
-    modal.style.justifyContent = "center";
-    modal.style.padding = "20px";
-    modal.style.zIndex = "99998";
-
-    modal.innerHTML = `
-      <div style="width:100%;max-width:760px;background:#ffffff;border-radius:18px;box-shadow:0 20px 45px rgba(15,23,42,0.22);overflow:hidden;border:1px solid #dbe4f0;">
-        <div style="padding:18px 22px;background:#eef4ff;border-bottom:1px solid #d7e5ff;display:flex;justify-content:space-between;align-items:center;gap:12px;">
-          <div>
-            <div style="font-size:22px;font-weight:800;color:#1d4ed8;">주소 검색 결과</div>
-            <div id="addressSearchModalSubTitle" style="margin-top:4px;font-size:13px;color:#475569;">검색 결과 목록에서 원하는 주소를 선택해주세요.</div>
-          </div>
-          <button id="addressSearchModalCloseTop" type="button" style="border:none;background:#dbeafe;color:#1d4ed8;border-radius:10px;padding:10px 14px;font-size:13px;font-weight:700;cursor:pointer;">닫기</button>
-        </div>
-        <div style="padding:22px;">
-          <div id="addressSearchModalResultList" style="display:flex;flex-direction:column;gap:10px;min-height:180px;"></div>
-          <div id="addressSearchModalEmpty" style="display:none;padding:28px 18px;border:1px dashed #cbd5e1;border-radius:14px;background:#f8fafc;color:#475569;text-align:center;line-height:1.8;">검색 결과가 없습니다.</div>
-          <div style="margin-top:18px;display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap;">
-            <button id="addressPrevPageBtn" type="button" style="height:40px;border:none;border-radius:10px;background:#e2e8f0;color:#334155;padding:0 14px;font-weight:700;cursor:pointer;">이전</button>
-            <div id="addressPageButtons" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
-            <button id="addressNextPageBtn" type="button" style="height:40px;border:none;border-radius:10px;background:#e2e8f0;color:#334155;padding:0 14px;font-weight:700;cursor:pointer;">다음</button>
-          </div>
-          <button id="addressSearchModalCloseBottom" type="button" style="margin-top:18px;width:100%;height:48px;border:none;border-radius:12px;background:#1f5aa8;color:#ffffff;font-size:16px;font-weight:800;cursor:pointer;">닫기</button>
         </div>
       </div>
     `;
@@ -558,7 +539,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
     return text.trim();
   }
-
 
   function inferStationByAddress(addressText, sigunguText = "") {
     const normalizedAddress = normalizeText(addressText);
@@ -977,12 +957,13 @@ document.addEventListener("DOMContentLoaded", function () {
       btn.type = "button";
       btn.textContent = String(i);
       btn.disabled = addressSearchState.isLoading;
-      btn.style.height = "40px";
-      btn.style.minWidth = "40px";
-      btn.style.padding = "0 12px";
+      btn.style.height = "36px";
+      btn.style.minWidth = "36px";
+      btn.style.padding = "0 10px";
       btn.style.border = "none";
       btn.style.borderRadius = "10px";
       btn.style.fontWeight = "800";
+      btn.style.fontSize = "13px";
       btn.style.cursor = addressSearchState.isLoading ? "not-allowed" : "pointer";
       if (i === addressSearchState.page) {
         btn.style.background = "#1f5aa8";
@@ -1016,7 +997,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
     try {
       const url = "https://business.juso.go.kr/addrlink/addrLinkApiJsonp.do" +
-  
         `?confmKey=${encodeURIComponent(jusoKey)}` +
         `&currentPage=${encodeURIComponent(page)}` +
         `&countPerPage=${encodeURIComponent(addressSearchState.countPerPage)}` +
@@ -1229,15 +1209,12 @@ document.addEventListener("DOMContentLoaded", function () {
       bindAddressSearchModalEvents(apiKey, updateSelectedPoint);
 
       async function searchAddressToCoord() {
-        
         const rawQuery = addressInput.value.trim();
         const query = normalizeAddressKeyword(rawQuery);
 
         if (addressInput && query && addressInput.value !== query) {
-        addressInput.value = query;
+          addressInput.value = query;
         }
-
-        
 
         if (!query) {
           setResultMessage("주소를 먼저 입력해주세요.");
