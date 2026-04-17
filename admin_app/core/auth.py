@@ -136,9 +136,9 @@ def _find_login_logo_path() -> Path | None:
         root / "assets" / "login_slogan.png",
         root / "assets" / "login_slogan.jpg",
         root / "assets" / "login_slogan.jpeg",
-        root / "assets" / "login_slogan.png",
+        root / "assets" / "고범석 청장님 슬로건(두 줄).png",
         root / "admin_app" / "assets" / "login_slogan.png",
-        root / "admin_app" / "assets" / "login_slogan.png",
+        root / "admin_app" / "assets" / "고범석 청장님 슬로건(두 줄).png",
     ]
 
     for path in candidates:
@@ -152,10 +152,17 @@ def _render_login_main(error_message: str = ""):
     st.markdown(
         """
         <style>
+        .login-top-spacer {
+            height: 0.2rem;
+        }
+        .login-logo-wrap {
+            margin-top: 0.1rem;
+            margin-bottom: 0.5rem;
+        }
         .login-title {
-            font-size: 2.4rem;
+            font-size: 2.3rem;
             font-weight: 800;
-            margin: 0.4rem 0 0.25rem 0;
+            margin: 0.2rem 0 0.2rem 0;
             text-align: center;
             color: #1f2a44;
         }
@@ -165,46 +172,36 @@ def _render_login_main(error_message: str = ""):
             text-align: center;
             font-size: 1rem;
         }
-        .login-card-box {
-            border: 1px solid rgba(49, 51, 63, 0.15);
-            border-radius: 22px;
-            padding: 1.45rem 1.35rem 1.2rem 1.35rem;
-            background: #ffffff;
-            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.06);
-        }
-        .login-top-gap {
-            height: 0.2rem;
-        }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="login-top-gap"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-top-spacer"></div>', unsafe_allow_html=True)
 
-    left, center, right = st.columns([1.15, 1.7, 1.15])
+    left, center, right = st.columns([1.2, 1.6, 1.2])
 
     with center:
         logo_path = _find_login_logo_path()
         if logo_path:
+            st.markdown('<div class="login-logo-wrap">', unsafe_allow_html=True)
             st.image(str(logo_path), use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
-        with st.container(border=False):
-            st.markdown('<div class="login-title">소상공인 시스템</div>', unsafe_allow_html=True)
-            st.markdown(
-                '<div class="login-desc">관리자 / CPO 계정으로 로그인해주세요.</div>',
-                unsafe_allow_html=True,
-            )
+        st.markdown('<div class="login-title">소상공인 시스템</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="login-desc">관리자 / CPO 계정으로 로그인해주세요.</div>',
+            unsafe_allow_html=True,
+        )
 
-            if error_message:
-                st.error(error_message)
+        if error_message:
+            st.error(error_message)
 
-            st.markdown('<div class="login-card-box">', unsafe_allow_html=True)
+        with st.container(border=True):
             with st.form("login_form_main", clear_on_submit=False):
                 email = st.text_input("이메일", key="login_email_main")
                 password = st.text_input("비밀번호", type="password", key="login_password_main")
                 submit = st.form_submit_button("로그인", use_container_width=True)
-            st.markdown("</div>", unsafe_allow_html=True)
 
     return email, password, submit
 
