@@ -1213,11 +1213,6 @@ def _render_application_edit_section(
             if not inferred_station_label:
                 raise Exception("정식 주소 기준으로 관할 경찰서를 자동 판별하지 못했습니다. 주소 검색 결과를 다시 선택해주세요.")
 
-            st.session_state[f"{prefix}station_label"] = inferred_station_label
-            st.session_state[f"{prefix}resolved_address"] = final_address
-            st.session_state[f"{prefix}latitude"] = float(lat_to_save)
-            st.session_state[f"{prefix}longitude"] = float(lon_to_save)
-
             update_payload = {
                 "applicant_name": _safe_str(st.session_state.get(f"{prefix}applicant_name")) or None,
                 "business_name": _safe_str(st.session_state.get(f"{prefix}business_name")) or None,
