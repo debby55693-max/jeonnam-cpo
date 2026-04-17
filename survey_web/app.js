@@ -209,7 +209,6 @@ document.addEventListener("DOMContentLoaded", function () {
     return modal;
   }
 
-  // 주소 검색 결과 팝업
   function ensureAddressSearchModal() {
     let modal = document.getElementById("addressSearchModal");
     if (modal) return modal;
@@ -222,27 +221,33 @@ document.addEventListener("DOMContentLoaded", function () {
     modal.style.display = "none";
     modal.style.alignItems = "center";
     modal.style.justifyContent = "center";
-    modal.style.padding = "10px";
+    modal.style.padding = "8px";
     modal.style.zIndex = "99998";
 
     modal.innerHTML = `
-      <div style="width:100%;max-width:430px;background:#ffffff;border-radius:16px;box-shadow:0 16px 32px rgba(15,23,42,0.18);overflow:hidden;border:1px solid #dbe4f0;">
-        <div style="padding:14px 16px;background:#eef4ff;border-bottom:1px solid #d7e5ff;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      <div style="width:100%;max-width:360px;max-height:78vh;background:#ffffff;border-radius:14px;box-shadow:0 14px 28px rgba(15,23,42,0.18);overflow:hidden;border:1px solid #dbe4f0;">
+        <div style="padding:12px 14px;background:#eef4ff;border-bottom:1px solid #d7e5ff;display:flex;justify-content:space-between;align-items:center;gap:8px;">
           <div>
-            <div style="font-size:18px;font-weight:800;color:#1d4ed8;">주소 검색 결과</div>
-            <div id="addressSearchModalSubTitle" style="margin-top:4px;font-size:12px;color:#475569;">검색 결과 목록에서 원하는 주소를 선택해주세요.</div>
+            <div style="font-size:16px;font-weight:800;color:#1d4ed8;">주소 검색 결과</div>
+            <div id="addressSearchModalSubTitle" style="margin-top:3px;font-size:11px;color:#475569;">원하는 주소를 선택해주세요.</div>
           </div>
-          <button id="addressSearchModalCloseTop" type="button" style="border:none;background:#dbeafe;color:#1d4ed8;border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;">닫기</button>
+          <button id="addressSearchModalCloseTop" type="button" style="border:none;background:#dbeafe;color:#1d4ed8;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;">닫기</button>
         </div>
-        <div style="padding:16px;">
-          <div id="addressSearchModalResultList" style="display:flex;flex-direction:column;gap:8px;min-height:120px;"></div>
-          <div id="addressSearchModalEmpty" style="display:none;padding:20px 14px;border:1px dashed #cbd5e1;border-radius:12px;background:#f8fafc;color:#475569;text-align:center;line-height:1.7;font-size:13px;">검색 결과가 없습니다.</div>
-          <div style="margin-top:14px;display:flex;justify-content:center;align-items:center;gap:6px;flex-wrap:wrap;">
-            <button id="addressPrevPageBtn" type="button" style="height:36px;border:none;border-radius:10px;background:#e2e8f0;color:#334155;padding:0 12px;font-weight:700;cursor:pointer;font-size:13px;">이전</button>
-            <div id="addressPageButtons" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
-            <button id="addressNextPageBtn" type="button" style="height:36px;border:none;border-radius:10px;background:#e2e8f0;color:#334155;padding:0 12px;font-weight:700;cursor:pointer;font-size:13px;">다음</button>
+
+        <div style="padding:12px;">
+          <div id="addressSearchModalResultList" style="display:flex;flex-direction:column;gap:6px;min-height:80px;max-height:48vh;overflow-y:auto;"></div>
+
+          <div id="addressSearchModalEmpty" style="display:none;padding:16px 12px;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc;color:#475569;text-align:center;line-height:1.6;font-size:12px;">
+          검색 결과가 없습니다.
           </div>
-          <button id="addressSearchModalCloseBottom" type="button" style="margin-top:14px;width:100%;height:42px;border:none;border-radius:12px;background:#1f5aa8;color:#ffffff;font-size:14px;font-weight:800;cursor:pointer;">닫기</button>
+
+          <div style="margin-top:10px;display:flex;justify-content:center;align-items:center;gap:5px;flex-wrap:wrap;">
+            <button id="addressPrevPageBtn" type="button" style="height:32px;border:none;border-radius:8px;background:#e2e8f0;color:#334155;padding:0 10px;font-weight:700;cursor:pointer;font-size:12px;">이전</button>
+            <div id="addressPageButtons" style="display:flex;gap:5px;flex-wrap:wrap;"></div>
+            <button id="addressNextPageBtn" type="button" style="height:32px;border:none;border-radius:8px;background:#e2e8f0;color:#334155;padding:0 10px;font-weight:700;cursor:pointer;font-size:12px;">다음</button>
+          </div>
+
+          <button id="addressSearchModalCloseBottom" type="button" style="margin-top:10px;width:100%;height:38px;border:none;border-radius:10px;background:#1f5aa8;color:#ffffff;font-size:13px;font-weight:800;cursor:pointer;">닫기</button>
         </div>
       </div>
     `;
@@ -833,13 +838,13 @@ document.addEventListener("DOMContentLoaded", function () {
     const zipNo = escapeHtml(item.zipNo || "");
 
     return `
-      <button type="button" data-address-index="${index}" style="width:100%;text-align:left;border:1px solid #dbe4f0;border-radius:14px;background:#ffffff;padding:16px;cursor:pointer;transition:all .15s ease;">
-        <div style="font-size:15px;font-weight:800;color:#0f172a;line-height:1.7;">${roadAddr}</div>
-        <div style="margin-top:6px;font-size:13px;color:#64748b;line-height:1.7;">지번: ${jibunAddr || "-"}</div>
-        <div style="margin-top:4px;font-size:12px;color:#94a3b8;">우편번호: ${zipNo || "-"}</div>
+      <button type="button" data-address-index="${index}" style="width:100%;text-align:left;border:1px solid #dbe4f0;border-radius:10px;background:#ffffff;padding:10px 12px;cursor:pointer;transition:all .15s ease;">
+        <div style="font-size:13px;font-weight:800;color:#0f172a;line-height:1.5;">${roadAddr}</div>
+        <div style="margin-top:4px;font-size:11px;color:#64748b;line-height:1.5;">지번: ${jibunAddr || "-"}</div>
+        <div style="margin-top:2px;font-size:10px;color:#94a3b8;">우편번호: ${zipNo || "-"}</div>
       </button>
-    `;
-  }
+  `  ;
+  } 
 
   function closeAddressSearchModal() {
     const modal = document.getElementById("addressSearchModal");
@@ -957,13 +962,13 @@ document.addEventListener("DOMContentLoaded", function () {
       btn.type = "button";
       btn.textContent = String(i);
       btn.disabled = addressSearchState.isLoading;
-      btn.style.height = "36px";
-      btn.style.minWidth = "36px";
-      btn.style.padding = "0 10px";
+      btn.style.height = "32px";
+      btn.style.minWidth = "32px";
+      btn.style.padding = "0 8px";
       btn.style.border = "none";
-      btn.style.borderRadius = "10px";
+      btn.style.borderRadius = "8px";
       btn.style.fontWeight = "800";
-      btn.style.fontSize = "13px";
+      btn.style.fontSize = "11px";
       btn.style.cursor = addressSearchState.isLoading ? "not-allowed" : "pointer";
       if (i === addressSearchState.page) {
         btn.style.background = "#1f5aa8";
