@@ -6,7 +6,7 @@ from pages.cpo_view import cpo_page
 
 
 st.set_page_config(
-    page_title="소상공인 안전물품 지원 시스템",
+    page_title="소상공인 시스템",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -28,7 +28,7 @@ def inject_base_css():
     common_css = """
     <style>
     .block-container {
-        padding-top: 0.8rem !important;
+        padding-top: 0.25rem !important;
         padding-bottom: 2rem !important;
         max-width: 1400px !important;
     }
@@ -56,7 +56,7 @@ def inject_base_css():
         }
 
         .block-container {
-            padding-top: 0.4rem !important;
+            padding-top: 0.1rem !important;
             padding-left: 2rem !important;
             padding-right: 2rem !important;
         }
