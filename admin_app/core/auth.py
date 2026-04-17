@@ -136,9 +136,9 @@ def _find_login_logo_path() -> Path | None:
         root / "assets" / "login_slogan.png",
         root / "assets" / "login_slogan.jpg",
         root / "assets" / "login_slogan.jpeg",
-        root / "assets" / "고범석 청장님 슬로건(두 줄).png",
+        root / "assets" / "login_slogan.png",
         root / "admin_app" / "assets" / "login_slogan.png",
-        root / "admin_app" / "assets" / "고범석 청장님 슬로건(두 줄).png",
+        root / "admin_app" / "assets" / "login_slogan.png",
     ]
 
     for path in candidates:
