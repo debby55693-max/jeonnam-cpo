@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from io import BytesIO
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -542,6 +543,53 @@ def _df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     return output.getvalue()
 
 
+def _sanitize_filename_text(value: Any, fallback: str = "all") -> str:
+    text = _safe_str(value)
+    if not text or text == "전체":
+        return fallback
+    text = re.sub(r"\s+", "_", text)
+    text = re.sub(r"[^0-9A-Za-z가-힣_\-]", "", text)
+    return text or fallback
+
+
+def _build_download_filename(
+    kind: str,
+    selected_station: str,
+    status_filter: str,
+    date_from: date,
+    date_to: date,
+    row_count: int,
+) -> str:
+    station_part = _sanitize_filename_text(selected_station, fallback="all_station")
+    status_part = _sanitize_filename_text(status_filter, fallback="all_status")
+    date_part = f"{date_from.strftime('%Y%m%d')}_{date_to.strftime('%Y%m%d')}"
+    return f"applications_{kind}_{station_part}_{status_part}_{date_part}_{row_count}건.xlsx"
+
+
+def _bump_table_editor_nonce():
+    st.session_state["applications_table_editor_nonce"] = int(st.session_state.get("applications_table_editor_nonce", 0)) + 1
+
+
+def _bulk_check_rows(rows: List[Dict[str, Any]]):
+    visible_ids = [row.get("application_id") for row in rows if row.get("application_id") is not None]
+    st.session_state["list_checked_application_ids"] = visible_ids
+    if visible_ids:
+        st.session_state["selected_application_id"] = visible_ids[0]
+        st.session_state["selected_application_selectbox"] = visible_ids[0]
+    _bump_table_editor_nonce()
+
+
+def _clear_checked_rows(rows: List[Dict[str, Any]]):
+    visible_ids = {row.get("application_id") for row in rows if row.get("application_id") is not None}
+    stored_ids = st.session_state.get("list_checked_application_ids", [])
+    st.session_state["list_checked_application_ids"] = [x for x in stored_ids if x not in visible_ids]
+    if rows and st.session_state.get("selected_application_id") not in visible_ids:
+        first_id = rows[0].get("application_id")
+        st.session_state["selected_application_id"] = first_id
+        st.session_state["selected_application_selectbox"] = first_id
+    _bump_table_editor_nonce()
+
+
 def _build_export_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
     data = []
     for idx, row in enumerate(rows, start=1):
@@ -840,7 +888,7 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
                 help="체크하면 해당 점포가 아래 지도와 상세정보에 바로 반영되고, 체크한 점포만 다운로드할 수 있습니다.",
             ),
         },
-        key="applications_table_editor",
+        key=f"applications_table_editor_{int(st.session_state.get('applications_table_editor_nonce', 0))}",
     )
 
     checked_ids = edited_df.loc[edited_df["선택"] == True, "_application_id"].tolist()
@@ -1534,19 +1582,46 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     checked_export_df = _build_export_df(checked_export_rows) if checked_export_rows else pd.DataFrame()
     all_export_df = _build_export_df(filtered_rows) if filtered_rows else pd.DataFrame()
 
-    list_title_col, list_btn1_col, list_btn2_col = st.columns([4, 1, 1])
+    checked_filename = _build_download_filename(
+        kind="checked",
+        selected_station=selected_station if role != "admin" else st.session_state.get("admin_station_filter", "전체"),
+        status_filter=status_filter,
+        date_from=date_from,
+        date_to=date_to,
+        row_count=len(checked_export_rows),
+    )
+    all_filename = _build_download_filename(
+        kind="all",
+        selected_station=selected_station if role != "admin" else st.session_state.get("admin_station_filter", "전체"),
+        status_filter=status_filter,
+        date_from=date_from,
+        date_to=date_to,
+        row_count=len(filtered_rows),
+    )
+
+    list_title_col, list_select_all_col, list_clear_col, list_btn1_col, list_btn2_col = st.columns([4, 1, 1, 1, 1])
     with list_title_col:
         st.markdown("### 접수 목록 현황")
         st.caption(
             f"목록에서 체크하면 해당 점포가 아래 지도와 상세정보에 바로 반영됩니다. 현재 체크 {len(checked_export_rows)}건 / 조회 결과 {len(filtered_rows)}건"
         )
         st.caption("다운로드 파일은 현재 조회 조건 기준이며, 접수정보·위치정보·설문응답·점수·검토정보 컬럼이 함께 포함됩니다.")
+    with list_select_all_col:
+        st.write("")
+        if st.button("조회결과 전체 체크", use_container_width=True, key="bulk_check_visible_rows"):
+            _bulk_check_rows(filtered_rows)
+            st.rerun()
+    with list_clear_col:
+        st.write("")
+        if st.button("현재 체크 해제", use_container_width=True, key="bulk_clear_visible_rows"):
+            _clear_checked_rows(filtered_rows)
+            st.rerun()
     with list_btn1_col:
         st.write("")
         st.download_button(
             "체크한 건 다운로드",
             data=_df_to_excel_bytes(checked_export_df) if not checked_export_df.empty else b"",
-            file_name=f"applications_checked_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            file_name=checked_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
             key="download_checked_applications_top",
@@ -1557,7 +1632,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         st.download_button(
             "조회 결과 전체 다운로드",
             data=_df_to_excel_bytes(all_export_df) if not all_export_df.empty else b"",
-            file_name=f"applications_all_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            file_name=all_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
             key="download_all_applications_top",
