@@ -257,6 +257,71 @@ def _get_secret_first(*keys: str) -> str:
     return ""
 
 
+def _inject_page_styles():
+    st.markdown(
+        """
+        <style>
+        .cpo-step-title {
+            margin: 8px 0 10px 0;
+            padding: 4px 0 10px 0;
+            border-bottom: 2px solid #E5E7EB;
+        }
+        .cpo-step-badge {
+            display: inline-block;
+            min-width: 30px;
+            height: 30px;
+            line-height: 30px;
+            text-align: center;
+            border-radius: 999px;
+            background: #EAF3FF;
+            color: #1D4ED8;
+            font-weight: 700;
+            margin-right: 10px;
+            font-size: 15px;
+        }
+        .cpo-step-text {
+            display: inline-block;
+            font-size: 24px;
+            font-weight: 800;
+            color: #0F172A;
+            vertical-align: middle;
+        }
+        .cpo-step-help {
+            margin-top: 6px;
+            margin-left: 42px;
+            color: #475569;
+            font-size: 13px;
+        }
+        .cpo-inline-guide {
+            padding: 2px 0 8px 0;
+            color: #475569;
+            font-size: 13px;
+        }
+        .cpo-inline-guide a {
+            color: #1D4ED8;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_section_heading(step_no: str, title: str, help_text: str = ""):
+    help_html = f'<div class="cpo-step-help">{help_text}</div>' if help_text else ""
+    st.markdown(
+        f"""
+        <div class="cpo-step-title">
+            <span class="cpo-step-badge">{step_no}</span>
+            <span class="cpo-step-text">{title}</span>
+            {help_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _get_juso_search_key() -> str:
     return _get_secret_first(
         "JUSO_CONFM_KEY",
@@ -750,7 +815,7 @@ def _render_map(rows: List[Dict[str, Any]], selected_row: Optional[Dict[str, Any
 
 
 def _render_score_guide():
-    with st.expander("우선순위 현황", expanded=True):
+    with st.expander("점수 산정 기준 보기", expanded=True):
         st.markdown(
             """
 **우선순위는 아래 항목을 합산하여 산정합니다.**
@@ -1368,28 +1433,16 @@ def _render_review_history(supabase, application_id: Any):
 
 
 def _render_semas_reference_box():
-    with st.container(border=True):
-        st.markdown("#### 정책자금 지원 제외업종 참고")
-        st.caption("제외업종 여부가 애매하면 아래 SEMAS 페이지를 바로 확인해주세요.")
-        st.markdown("- [소상공인시장진흥공단 정책자금 지원 제외업종 안내](https://ols.semas.or.kr/ols/pfa/SPFA207P/page.do)")
-
-
-def _render_cpo_flow_guide():
-    with st.container(border=True):
-        st.markdown("#### 한눈에 보는 관리 흐름")
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.markdown("**1. 조회**")
-            st.caption("상단 필터로 경찰서·상태·기간을 걸고 접수 현황을 먼저 확인합니다.")
-        with c2:
-            st.markdown("**2. 우선 확인**")
-            st.caption("우선순위 표에서 먼저 볼 점포를 빠르게 확인합니다.")
-        with c3:
-            st.markdown("**3. 체크 후 검토**")
-            st.caption("접수 목록에서 체크하면 아래 지도와 상세정보가 함께 바뀝니다.")
-        with c4:
-            st.markdown("**4. 저장·다운로드**")
-            st.caption("상세정보에서 검토 저장 후 체크건 또는 전체건을 다운로드합니다.")
+    st.markdown(
+        """
+        <div class="cpo-inline-guide">
+            🔎 <strong>정책자금 지원 제외업종 참고</strong>
+            · <a href="https://ols.semas.or.kr/ols/pfa/SPFA207P/page.do" target="_blank">SEMAS 제외업종 바로가기</a>
+            <span style="margin-left:8px;">제외 여부가 애매하면 저장 전에 바로 확인하세요.</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _validate_review_inputs(review_status: str, exclude_flag: bool, exclude_reason: str, docs_request_comment: str):
@@ -1536,6 +1589,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     station_map = _fetch_station_map(supabase)
     station_label_options = _unique_station_options((station_options or []) + list(station_map.keys()))
 
+    _inject_page_styles()
     st.title("전남경찰청 CPO 관리시스템")
 
     raw_rows = _fetch_rows(supabase)
@@ -1580,6 +1634,8 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         with f4:
             keyword = st.text_input("점포명 / 신청인 / 주소 검색", key="keyword")
 
+    _render_section_heading("1", "접수 조회", "경찰서·상태·기간·검색어를 먼저 정한 뒤 아래 목록을 확인합니다.")
+
     filtered_rows = _apply_filters(
         rows=raw_rows,
         role=role,
@@ -1591,7 +1647,8 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     )
 
     _render_top_metrics(filtered_rows)
-    _render_cpo_flow_guide()
+
+    _render_section_heading("2", "우선 검토 대상 확인", "점수가 높은 점포를 먼저 보고, 제외업종 여부도 바로 확인합니다.")
     _render_score_guide()
     _render_semas_reference_box()
     _render_priority_table(filtered_rows)
@@ -1618,12 +1675,11 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         row_count=len(filtered_rows),
     )
 
+    _render_section_heading("3", "접수 목록 선택", f"현재 체크 {len(checked_export_rows)}건 / 조회 결과 {len(filtered_rows)}건")
+
     list_title_col, list_select_all_col, list_clear_col, list_btn1_col, list_btn2_col = st.columns([4, 1, 1, 1, 1])
     with list_title_col:
         st.markdown("### 접수 목록 현황")
-        st.caption(
-            f"목록에서 체크하면 해당 점포가 아래 지도와 상세정보에 바로 반영됩니다. 현재 체크 {len(checked_export_rows)}건 / 조회 결과 {len(filtered_rows)}건"
-        )
     with list_select_all_col:
         st.write("")
         if st.button("조회결과 전체 체크", use_container_width=True, key="bulk_check_visible_rows"):
@@ -1659,6 +1715,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
 
     _render_list_table(filtered_rows)
 
+    _render_section_heading("4", "지도 확인 · 상세 검토", "목록에서 선택한 점포의 위치를 확인하고 아래에서 검토를 저장합니다.")
     st.markdown("### 접수 현황 지도")
     selected_row = _selected_row(filtered_rows)
 
