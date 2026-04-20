@@ -43,44 +43,6 @@ COMMON_SALES_BANDS = [
     "1억원 초과 ~ 2억원 이하",
     "2억원 초과",
 ]
-SEMAS_EXCLUDED_URL = "https://ols.semas.or.kr/ols/pfa/SPFA207P/page.do"
-SEMAS_EXCLUDED_MAJOR_ITEMS = [
-    "도박·사행성·불건전 오락기구 관련 업종",
-    "담배 관련 도매·중개 업종",
-    "약국·한약국",
-    "성인용품 판매점",
-    "일반유흥주점·무도유흥주점",
-    "금융업·보험업·금융보험 관련 서비스업",
-    "부동산업 일부",
-    "법무·회계·세무 등 일부 전문서비스업",
-    "보건업",
-    "카지노·무도장·성인오락실 등 사행·향락 업종",
-    "점술·유사서비스업, 휴게텔·키스방·대화방",
-]
-SEMAS_EXCLUDED_KEYWORD_HINTS = [
-    ("도박", "도박·사행성 관련 업종은 지원 제외 가능성이 큽니다."),
-    ("사행", "사행성 업종은 지원 제외 가능성이 큽니다."),
-    ("담배", "담배 관련 업종은 지원 제외 대상인지 확인이 필요합니다."),
-    ("약국", "약국·한약국은 지원 제외 대상에 포함됩니다."),
-    ("한약국", "약국·한약국은 지원 제외 대상에 포함됩니다."),
-    ("성인", "성인용품·성인오락 관련 업종은 지원 제외 가능성이 큽니다."),
-    ("유흥", "일반유흥주점·무도유흥주점은 지원 제외 대상인지 확인이 필요합니다."),
-    ("금융", "금융업은 지원 제외 대상에 포함됩니다."),
-    ("보험", "보험업은 지원 제외 대상에 포함됩니다."),
-    ("부동산", "부동산업은 예외 허용 업종이 있어 세부 확인이 필요합니다."),
-    ("법무", "법무 관련 서비스업은 지원 제외 대상인지 확인이 필요합니다."),
-    ("회계", "회계·세무 관련 서비스업은 지원 제외 대상인지 확인이 필요합니다."),
-    ("세무", "회계·세무 관련 서비스업은 지원 제외 대상인지 확인이 필요합니다."),
-    ("수의", "수의업은 지원 제외 대상인지 확인이 필요합니다."),
-    ("보건", "보건업은 예외 업종이 있어 세부 확인이 필요합니다."),
-    ("카지노", "카지노 등 사행시설은 지원 제외 대상입니다."),
-    ("무도장", "무도장 운영업은 지원 제외 대상인지 확인이 필요합니다."),
-    ("안마", "증기탕·안마시술소는 예외 여부를 포함해 확인이 필요합니다."),
-    ("점술", "점술 및 유사서비스업은 지원 제외 대상입니다."),
-    ("흥신", "흥신소는 지원 제외 대상입니다."),
-    ("추심", "신용조사·추심대행업은 지원 제외 대상입니다."),
-]
-
 JEONNAM_STATION_AREAS = [
     ("목포", "목포경찰서"),
     ("여수", "여수경찰서"),
@@ -879,106 +841,6 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
     return checked_ids
 
 
-def _normalize_review_status(review_status_label: str, exclude_flag: bool) -> str:
-    review_status_label = _safe_str(review_status_label)
-    if exclude_flag or review_status_label == "제외":
-        return "excluded"
-    if review_status_label == "추가서류요청":
-        return "docs_requested"
-    if review_status_label == "선정":
-        return "selected"
-    return "reviewed"
-
-
-def _validate_review_input(review_status_label: str, exclude_flag: bool, exclude_reason: str, docs_request_comment: str):
-    normalized_status = _normalize_review_status(review_status_label, exclude_flag)
-
-    if normalized_status == "docs_requested" and not _safe_str(docs_request_comment):
-        raise Exception("추가서류요청 상태로 저장하려면 요청 내용을 입력해주세요.")
-
-    if normalized_status == "excluded" and not _safe_str(exclude_reason):
-        raise Exception("제외 상태로 저장하려면 제외 사유를 입력해주세요.")
-
-    return normalized_status
-
-
-def _fetch_review_history(supabase, application_id: Any) -> List[Dict[str, Any]]:
-    if not application_id:
-        return []
-    try:
-        resp = (
-            supabase.table("cpo_reviews")
-            .select("id, review_result, cpo_risk_label, cpo_risk_score, is_excluded, exclude_reason, review_comment, docs_request_comment, reviewed_at, reviewer_id")
-            .eq("application_id", application_id)
-            .order("reviewed_at", desc=True)
-            .limit(50)
-            .execute()
-        )
-        return resp.data or []
-    except Exception:
-        return []
-
-
-def _render_review_history(supabase, application_id: Any):
-    history_rows = _fetch_review_history(supabase, application_id)
-    st.markdown("#### 검토 이력")
-    if not history_rows:
-        st.caption("아직 저장된 검토 이력이 없습니다.")
-        return
-
-    display_rows = []
-    for idx, item in enumerate(history_rows, start=1):
-        review_result = _status_label(item.get("review_result"))
-        exclude_reason = _safe_str(item.get("exclude_reason"))
-        review_comment = _safe_str(item.get("review_comment"))
-        docs_request_comment = _safe_str(item.get("docs_request_comment"))
-        summary_parts = []
-        if review_comment:
-            summary_parts.append(f"검토메모: {review_comment}")
-        if docs_request_comment:
-            summary_parts.append(f"추가서류요청: {docs_request_comment}")
-        if exclude_reason:
-            summary_parts.append(f"제외사유: {exclude_reason}")
-
-        display_rows.append({
-            "순번": idx,
-            "검토일시": _format_submitted_text(item.get("reviewed_at")),
-            "검토상태": review_result or "-",
-            "CPO위험도": _safe_str(item.get("cpo_risk_label")) or "-",
-            "점수": _safe_int(item.get("cpo_risk_score"), 0),
-            "제외여부": "예" if bool(item.get("is_excluded")) else "아니오",
-            "내용": " / ".join(summary_parts) if summary_parts else "-",
-        })
-
-    st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
-
-
-def _excluded_business_hint_text(row: Dict[str, Any]) -> str:
-    business_text = (_display_business_type(row) + " " + _safe_str(row.get("business_name"))).strip().lower()
-    for keyword, message in SEMAS_EXCLUDED_KEYWORD_HINTS:
-        if keyword.lower() in business_text:
-            return message
-    return ""
-
-
-def _render_semas_excluded_reference(row: Dict[str, Any]):
-    with st.expander("정책자금 지원 제외업종 참고", expanded=False):
-        st.markdown(f"공식 참고 페이지: [소상공인 정책자금 지원 제외업종]({SEMAS_EXCLUDED_URL})")
-        st.caption("현재 화면에서는 CPO 검토 참고용으로 보여주며, 최종 판단은 표준산업분류와 공식 예외 기준을 함께 확인해야 합니다.")
-
-        hint = _excluded_business_hint_text(row)
-        if hint:
-            st.warning(f"현재 점포 업종명 기준 자동 참고: {hint}")
-        else:
-            st.info("현재 점포명/업종명만으로는 자동 참고 경고가 잡히지 않았습니다. 그래도 아래 공식 제외업종과 예외기준을 꼭 확인해주세요.")
-
-        st.markdown("**주요 제외업종 예시**")
-        for item in SEMAS_EXCLUDED_MAJOR_ITEMS:
-            st.markdown(f"- {item}")
-
-        st.caption("※ 부동산업, 보건업, 안마시술소 등은 일부 예외 허용 업종이 있으므로 공식 페이지에서 세부 기준을 함께 확인하세요.")
-
-
 def _save_review(
     supabase,
     row: Dict[str, Any],
@@ -994,16 +856,8 @@ def _save_review(
     application_id = row.get("application_id")
     if not application_id:
         raise Exception("application_id가 없습니다.")
-    if not reviewer_id:
-        raise Exception("로그인 사용자 정보가 없습니다. 다시 로그인 후 시도해주세요.")
 
-    review_result = _validate_review_input(
-        review_status_label=review_status_label,
-        exclude_flag=exclude_flag,
-        exclude_reason=exclude_reason,
-        docs_request_comment=docs_request_comment,
-    )
-
+    review_result = _review_status_value(review_status_label, exclude_flag)
     payload = {
         "application_id": application_id,
         "reviewer_id": reviewer_id,
@@ -1011,10 +865,10 @@ def _save_review(
         "review_result": review_result,
         "cpo_risk_label": risk_label,
         "cpo_risk_score": CPO_RISK_OPTIONS.get(risk_label, 0),
-        "is_excluded": review_result == "excluded",
-        "exclude_reason": _safe_str(exclude_reason) if review_result == "excluded" else None,
-        "review_comment": _safe_str(review_comment) or None,
-        "docs_request_comment": _safe_str(docs_request_comment) if review_result == "docs_requested" else None,
+        "is_excluded": bool(exclude_flag),
+        "exclude_reason": _safe_str(exclude_reason),
+        "review_comment": _safe_str(review_comment),
+        "docs_request_comment": _safe_str(docs_request_comment),
         "reviewed_at": datetime.now().isoformat(),
     }
 
@@ -1092,6 +946,7 @@ def _ensure_edit_state(row: Dict[str, Any], station_options: List[str]):
         f"{prefix}search_message": "",
         f"{prefix}search_results": [],
         f"{prefix}selected_search_idx": 0,
+        f"{prefix}pending_address_apply": None,
     }
 
     bound_id = st.session_state.get("edit_state_bound_application_id")
@@ -1103,6 +958,23 @@ def _ensure_edit_state(row: Dict[str, Any], station_options: List[str]):
         for key, value in defaults.items():
             if key not in st.session_state:
                 st.session_state[key] = value
+
+    pending_apply = st.session_state.pop(f"{prefix}pending_address_apply", None)
+    if isinstance(pending_apply, dict):
+        if "search_message" in pending_apply:
+            st.session_state[f"{prefix}search_message"] = pending_apply.get("search_message") or ""
+        if "selected_search_idx" in pending_apply:
+            st.session_state[f"{prefix}selected_search_idx"] = _safe_int(pending_apply.get("selected_search_idx"), 0)
+        if "address_query" in pending_apply:
+            st.session_state[f"{prefix}address_query"] = _safe_str(pending_apply.get("address_query"))
+        if "resolved_address" in pending_apply:
+            st.session_state[f"{prefix}resolved_address"] = _safe_str(pending_apply.get("resolved_address"))
+        if "latitude" in pending_apply:
+            st.session_state[f"{prefix}latitude"] = _safe_float(pending_apply.get("latitude"), 0.0)
+        if "longitude" in pending_apply:
+            st.session_state[f"{prefix}longitude"] = _safe_float(pending_apply.get("longitude"), 0.0)
+        if _safe_str(pending_apply.get("station_label")):
+            st.session_state[f"{prefix}station_label"] = _safe_str(pending_apply.get("station_label"))
 
 
 def _render_application_edit_section(
@@ -1190,15 +1062,15 @@ def _render_application_edit_section(
                     selected = search_results[selected_idx]
                     chosen_address, lat, lon = _resolve_candidate_to_address_and_coord(selected)
                     inferred_station_label = _infer_station_label_from_address(chosen_address, station_label_options)
-                    st.session_state[f"{prefix}search_message"] = "선택한 주소를 반영했습니다. 저장하면 지도 위치도 함께 변경됩니다."
-                    st.session_state[f"{prefix}search_results"] = search_results
-                    st.session_state[f"{prefix}selected_search_idx"] = selected_idx
-                    st.session_state[f"{prefix}address_query"] = chosen_address
-                    st.session_state[f"{prefix}resolved_address"] = chosen_address
-                    st.session_state[f"{prefix}latitude"] = float(lat)
-                    st.session_state[f"{prefix}longitude"] = float(lon)
-                    if inferred_station_label:
-                        st.session_state[f"{prefix}station_label"] = inferred_station_label
+                    st.session_state[f"{prefix}pending_address_apply"] = {
+                        "search_message": "선택한 주소를 반영했습니다. 저장하면 지도 위치도 함께 변경됩니다.",
+                        "selected_search_idx": selected_idx,
+                        "address_query": chosen_address,
+                        "resolved_address": chosen_address,
+                        "latitude": float(lat),
+                        "longitude": float(lon),
+                        "station_label": inferred_station_label,
+                    }
                     st.rerun()
                 except Exception as exc:
                     st.session_state[f"{prefix}search_message"] = f"주소 반영 실패: {exc}"
@@ -1381,8 +1253,6 @@ def _render_detail(
         station_options=station_options,
     )
 
-    _render_semas_excluded_reference(row)
-
     st.markdown("#### CPO 검토 입력")
     st.caption("검토 결과를 저장하면 cpo_reviews에 이력이 쌓이고, applications의 현재 상태도 함께 변경됩니다.")
 
@@ -1412,13 +1282,8 @@ def _render_detail(
         exclude_flag = st.checkbox(
             "우선순위 제외 대상",
             value=bool(row.get("is_excluded")) or review_status == "제외",
-            help="체크하면 검토 상태와 관계없이 제외로 저장됩니다.",
         )
-        exclude_reason = st.text_input(
-            "제외 사유",
-            value=_safe_str(row.get("exclude_reason")),
-            placeholder="제외로 저장할 때는 반드시 입력해주세요.",
-        )
+        exclude_reason = st.text_input("제외 사유", value=_safe_str(row.get("exclude_reason")))
         review_comment = st.text_area("검토 메모", value=_safe_str(row.get("review_comment")), height=100)
         docs_request_comment = st.text_area(
             "추가서류 요청 내용",
@@ -1426,8 +1291,6 @@ def _render_detail(
             height=80,
             placeholder="예: 사업자등록증, 최근 매출현황 증빙자료 제출 요청",
         )
-        st.caption("검토 상태가 '추가서류요청'이면 요청 내용을, '제외'이면 제외 사유를 반드시 입력해야 저장됩니다.")
-
         submitted = st.form_submit_button("검토 저장", use_container_width=True)
 
         if submitted:
@@ -1444,12 +1307,10 @@ def _render_detail(
                     review_comment=review_comment,
                     docs_request_comment=docs_request_comment,
                 )
-                st.success("검토 결과가 저장되었습니다. 검토 이력과 현재 상태가 함께 반영되었습니다.")
+                st.success("검토 결과가 저장되었습니다.")
                 st.rerun()
             except Exception as exc:
                 st.error(f"저장 실패: {exc}")
-
-    _render_review_history(supabase, row.get("application_id"))
 
 
 def cpo_page(supabase, role: str, station: str, station_options: List[str]):
