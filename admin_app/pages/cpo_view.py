@@ -858,6 +858,8 @@ def _save_review(
         raise Exception("application_id가 없습니다.")
 
     review_result = _review_status_value(review_status_label, exclude_flag)
+    final_excluded = bool(exclude_flag) or review_result == "excluded"
+
     payload = {
         "application_id": application_id,
         "reviewer_id": reviewer_id,
@@ -865,7 +867,7 @@ def _save_review(
         "review_result": review_result,
         "cpo_risk_label": risk_label,
         "cpo_risk_score": CPO_RISK_OPTIONS.get(risk_label, 0),
-        "is_excluded": bool(exclude_flag),
+        "is_excluded": final_excluded,
         "exclude_reason": _safe_str(exclude_reason),
         "review_comment": _safe_str(review_comment),
         "docs_request_comment": _safe_str(docs_request_comment),
@@ -918,6 +920,23 @@ def _render_detail_summary_cards(row: Dict[str, Any]):
     c4.metric("총점", f"{_total_score(row)}점")
 
 
+def _edit_widget_key(prefix: str, field_name: str) -> str:
+    return f"{prefix}{field_name}__widget"
+
+
+def _sync_edit_state_to_widgets(prefix: str):
+    sync_fields = ["address_query", "resolved_address", "station_label", "latitude", "longitude", "selected_search_idx"]
+    for field_name in sync_fields:
+        canonical_key = f"{prefix}{field_name}"
+        widget_key = _edit_widget_key(prefix, field_name)
+        if field_name in ["latitude", "longitude"]:
+            st.session_state[widget_key] = _safe_float(st.session_state.get(canonical_key), 0.0)
+        elif field_name == "selected_search_idx":
+            st.session_state[widget_key] = _safe_int(st.session_state.get(canonical_key), 0)
+        else:
+            st.session_state[widget_key] = _safe_str(st.session_state.get(canonical_key))
+
+
 def _ensure_edit_state(row: Dict[str, Any], station_options: List[str]):
     application_id = row.get("application_id")
     prefix = f"edit_{application_id}_"
@@ -947,13 +966,17 @@ def _ensure_edit_state(row: Dict[str, Any], station_options: List[str]):
         f"{prefix}search_results": [],
         f"{prefix}selected_search_idx": 0,
         f"{prefix}pending_address_apply": None,
+        f"{prefix}sync_widgets": False,
     }
 
     bound_id = st.session_state.get("edit_state_bound_application_id")
+    needs_widget_sync = False
+
     if bound_id != application_id:
         for key, value in defaults.items():
             st.session_state[key] = value
         st.session_state["edit_state_bound_application_id"] = application_id
+        needs_widget_sync = True
     else:
         for key, value in defaults.items():
             if key not in st.session_state:
@@ -973,8 +996,26 @@ def _ensure_edit_state(row: Dict[str, Any], station_options: List[str]):
             st.session_state[f"{prefix}latitude"] = _safe_float(pending_apply.get("latitude"), 0.0)
         if "longitude" in pending_apply:
             st.session_state[f"{prefix}longitude"] = _safe_float(pending_apply.get("longitude"), 0.0)
-        if _safe_str(pending_apply.get("station_label")):
+        if "station_label" in pending_apply:
             st.session_state[f"{prefix}station_label"] = _safe_str(pending_apply.get("station_label"))
+        needs_widget_sync = True
+
+    if st.session_state.pop(f"{prefix}sync_widgets", False):
+        needs_widget_sync = True
+
+    if needs_widget_sync:
+        _sync_edit_state_to_widgets(prefix)
+    else:
+        for field_name in ["address_query", "resolved_address", "station_label", "latitude", "longitude", "selected_search_idx"]:
+            widget_key = _edit_widget_key(prefix, field_name)
+            canonical_key = f"{prefix}{field_name}"
+            if widget_key not in st.session_state:
+                if field_name in ["latitude", "longitude"]:
+                    st.session_state[widget_key] = _safe_float(st.session_state.get(canonical_key), 0.0)
+                elif field_name == "selected_search_idx":
+                    st.session_state[widget_key] = _safe_int(st.session_state.get(canonical_key), 0)
+                else:
+                    st.session_state[widget_key] = _safe_str(st.session_state.get(canonical_key))
 
 
 def _render_application_edit_section(
@@ -1003,6 +1044,13 @@ def _render_application_edit_section(
 
     _ensure_edit_state(row, station_label_options)
 
+    address_query_widget_key = _edit_widget_key(prefix, "address_query")
+    resolved_address_widget_key = _edit_widget_key(prefix, "resolved_address")
+    station_label_widget_key = _edit_widget_key(prefix, "station_label")
+    latitude_widget_key = _edit_widget_key(prefix, "latitude")
+    longitude_widget_key = _edit_widget_key(prefix, "longitude")
+    selected_search_idx_widget_key = _edit_widget_key(prefix, "selected_search_idx")
+
     st.markdown("#### 접수 정보 수정 / 삭제")
 
     with st.container(border=True):
@@ -1013,7 +1061,7 @@ def _render_application_edit_section(
         with c_addr1:
             st.text_input(
                 "주소 입력",
-                key=f"{prefix}address_query",
+                key=address_query_widget_key,
                 placeholder="예: 전라남도 목포시 ○○로 123",
             )
         with c_addr2:
@@ -1021,7 +1069,8 @@ def _render_application_edit_section(
 
         if search_clicked:
             try:
-                query = _safe_str(st.session_state.get(f"{prefix}address_query"))
+                query = _safe_str(st.session_state.get(address_query_widget_key))
+                st.session_state[f"{prefix}address_query"] = query
                 if not query:
                     st.session_state[f"{prefix}search_message"] = "주소를 먼저 입력해주세요."
                     st.session_state[f"{prefix}search_results"] = []
@@ -1033,6 +1082,7 @@ def _render_application_edit_section(
                         st.session_state[f"{prefix}search_message"] = f"검색 결과 {len(results)}건을 찾았습니다. 아래에서 주소를 선택해주세요."
                     else:
                         st.session_state[f"{prefix}search_message"] = "검색 결과가 없습니다. 시/군/구와 도로명, 건물번호를 더 자세히 입력해주세요."
+                st.session_state[f"{prefix}sync_widgets"] = True
                 st.rerun()
             except Exception as exc:
                 st.session_state[f"{prefix}search_results"] = []
@@ -1045,20 +1095,24 @@ def _render_application_edit_section(
 
         search_results = st.session_state.get(f"{prefix}search_results", []) or []
         if search_results:
+            current_search_idx = min(
+                _safe_int(st.session_state.get(selected_search_idx_widget_key), 0),
+                len(search_results) - 1,
+            )
             st.radio(
                 "검색 결과",
                 list(range(len(search_results))),
-                index=min(_safe_int(st.session_state.get(f"{prefix}selected_search_idx"), 0), len(search_results) - 1),
+                index=current_search_idx,
                 format_func=lambda i: (
                     f"{_safe_str(search_results[i].get('roadAddr'))} "
                     f"(지번: {_safe_str(search_results[i].get('jibunAddr')) or '-'})"
                 ),
-                key=f"{prefix}selected_search_idx",
+                key=selected_search_idx_widget_key,
             )
 
             if st.button("선택한 주소 반영", key=f"{prefix}apply_selected_address_btn", use_container_width=True):
                 try:
-                    selected_idx = _safe_int(st.session_state.get(f"{prefix}selected_search_idx"), 0)
+                    selected_idx = _safe_int(st.session_state.get(selected_search_idx_widget_key), 0)
                     selected = search_results[selected_idx]
                     chosen_address, lat, lon = _resolve_candidate_to_address_and_coord(selected)
                     inferred_station_label = _infer_station_label_from_address(chosen_address, station_label_options)
@@ -1078,7 +1132,7 @@ def _render_application_edit_section(
 
         st.text_input(
             "선택된 주소",
-            key=f"{prefix}resolved_address",
+            key=resolved_address_widget_key,
             placeholder="주소 검색 결과를 선택하면 여기에 반영됩니다.",
             disabled=True,
         )
@@ -1111,14 +1165,15 @@ def _render_application_edit_section(
         )
 
     with c2:
+        current_station_widget_value = _safe_str(st.session_state.get(station_label_widget_key))
         st.selectbox(
             "관할 경찰서",
             station_label_options,
-            index=station_label_options.index(st.session_state.get(f"{prefix}station_label", "")) if st.session_state.get(f"{prefix}station_label", "") in station_label_options else 0,
-            key=f"{prefix}station_label",
+            index=station_label_options.index(current_station_widget_value) if current_station_widget_value in station_label_options else 0,
+            key=station_label_widget_key,
         )
-        st.number_input("위도", format="%.6f", key=f"{prefix}latitude")
-        st.number_input("경도", format="%.6f", key=f"{prefix}longitude")
+        st.number_input("위도", format="%.6f", key=latitude_widget_key)
+        st.number_input("경도", format="%.6f", key=longitude_widget_key)
         st.checkbox("점포 내 CCTV 있음", key=f"{prefix}has_cctv")
         st.checkbox("비상벨 설치됨", key=f"{prefix}has_emergency_bell")
         st.checkbox("사설경비 이용 중", key=f"{prefix}uses_security_company")
@@ -1134,9 +1189,9 @@ def _render_application_edit_section(
 
     if save_clicked:
         try:
-            final_address = _safe_str(st.session_state.get(f"{prefix}resolved_address")) or _safe_str(st.session_state.get(f"{prefix}address_query"))
-            lat_to_save = _safe_float(st.session_state.get(f"{prefix}latitude"), 0.0)
-            lon_to_save = _safe_float(st.session_state.get(f"{prefix}longitude"), 0.0)
+            final_address = _safe_str(st.session_state.get(resolved_address_widget_key)) or _safe_str(st.session_state.get(address_query_widget_key))
+            lat_to_save = _safe_float(st.session_state.get(latitude_widget_key), 0.0)
+            lon_to_save = _safe_float(st.session_state.get(longitude_widget_key), 0.0)
 
             if final_address and (not lat_to_save or not lon_to_save):
                 lat, lon, official = _coord_from_vworld(final_address)
@@ -1146,7 +1201,7 @@ def _render_application_edit_section(
                     final_address = official or final_address
 
             inferred_station_label = _infer_station_label_from_address(final_address, station_label_options)
-            manual_station_label = _safe_str(st.session_state.get(f"{prefix}station_label"))
+            manual_station_label = _safe_str(st.session_state.get(station_label_widget_key))
             final_station_label = inferred_station_label or manual_station_label
 
             update_payload = {
@@ -1190,6 +1245,68 @@ def _render_application_edit_section(
             st.rerun()
         except Exception as exc:
             st.error(f"삭제 실패: {exc}")
+
+
+def _fetch_review_history(supabase, application_id: Any) -> List[Dict[str, Any]]:
+    if not application_id:
+        return []
+
+    try:
+        resp = (
+            supabase.table("cpo_reviews")
+            .select(
+                "reviewed_at, review_result, cpo_risk_label, cpo_risk_score, is_excluded, "
+                "exclude_reason, review_comment, docs_request_comment, reviewer_id"
+            )
+            .eq("application_id", application_id)
+            .order("reviewed_at", desc=True)
+            .execute()
+        )
+        return resp.data or []
+    except Exception as exc:
+        st.warning(f"검토 이력 조회 실패: {exc}")
+        return []
+
+
+def _render_review_history(supabase, application_id: Any):
+    st.markdown("#### 검토 이력")
+    history_rows = _fetch_review_history(supabase, application_id)
+    if not history_rows:
+        st.info("저장된 검토 이력이 없습니다.")
+        return
+
+    history_data = []
+    for idx, item in enumerate(history_rows, start=1):
+        history_data.append(
+            {
+                "번호": idx,
+                "검토일시": _format_submitted_text(item.get("reviewed_at")),
+                "검토상태": _status_label(item.get("review_result")),
+                "CPO위험도": _safe_str(item.get("cpo_risk_label")) or "-",
+                "제외여부": "예" if bool(item.get("is_excluded")) else "아니오",
+                "제외사유": _safe_str(item.get("exclude_reason")) or "-",
+                "추가서류요청": _safe_str(item.get("docs_request_comment")) or "-",
+                "검토메모": _safe_str(item.get("review_comment")) or "-",
+                "검토자ID": _safe_str(item.get("reviewer_id")) or "-",
+            }
+        )
+
+    st.dataframe(pd.DataFrame(history_data), use_container_width=True, hide_index=True)
+
+
+def _render_semas_reference_box():
+    with st.container(border=True):
+        st.markdown("#### 정책자금 지원 제외업종 참고")
+        st.caption("검토 중 제외업종 여부가 애매하면 아래 SEMAS 페이지를 바로 확인해주세요.")
+        st.markdown("- [소상공인시장진흥공단 정책자금 지원 제외업종 안내](https://ols.semas.or.kr/ols/pfa/SPFA207P/page.do)")
+
+
+def _validate_review_inputs(review_status: str, exclude_flag: bool, exclude_reason: str, docs_request_comment: str):
+    if review_status == "추가서류요청" and not _safe_str(docs_request_comment):
+        raise Exception("추가서류요청 상태로 저장하려면 요청 내용을 입력해주세요.")
+
+    if (review_status == "제외" or exclude_flag) and not _safe_str(exclude_reason):
+        raise Exception("제외로 저장하려면 제외 사유를 입력해주세요.")
 
 
 def _render_detail(
@@ -1253,6 +1370,9 @@ def _render_detail(
         station_options=station_options,
     )
 
+    _render_semas_reference_box()
+    _render_review_history(supabase, row.get("application_id"))
+
     st.markdown("#### CPO 검토 입력")
     st.caption("검토 결과를 저장하면 cpo_reviews에 이력이 쌓이고, applications의 현재 상태도 함께 변경됩니다.")
 
@@ -1295,6 +1415,12 @@ def _render_detail(
 
         if submitted:
             try:
+                _validate_review_inputs(
+                    review_status=review_status,
+                    exclude_flag=exclude_flag,
+                    exclude_reason=exclude_reason,
+                    docs_request_comment=docs_request_comment,
+                )
                 _save_review(
                     supabase=supabase,
                     row=row,
