@@ -195,6 +195,19 @@ def _format_coord(value: Any) -> str:
     return f"{num:.6f}" if num else "-"
 
 
+def _yes_no(value: Any) -> str:
+    return "예" if bool(value) else "아니오"
+
+
+def _security_company_text(value: Any) -> str:
+    return "이용 중" if bool(value) else "이용하지 않음"
+
+
+def _coord_for_export(value: Any) -> Any:
+    num = _safe_float(value, 0.0)
+    return round(num, 6) if num else ""
+
+
 def _felt_safety_score(row: Dict[str, Any]) -> int:
     return max(0, min(40, _safe_int(row.get("felt_safety_score"), 0)))
 
@@ -531,30 +544,42 @@ def _df_to_excel_bytes(df: pd.DataFrame) -> bytes:
 
 def _build_export_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
     data = []
-    for row in rows:
+    for idx, row in enumerate(rows, start=1):
         data.append(
             {
+                "번호": idx,
+                "신청ID": _safe_str(row.get("application_id")),
+                "현재상태": _status_label(row.get("current_status")),
+                "접수일시": _format_submitted_text(row.get("submitted_at")),
+                "관할경찰서": _safe_str(row.get("station_label")),
                 "점포명": _safe_str(row.get("business_name")),
                 "신청인": _safe_str(row.get("applicant_name")),
                 "연락처": _safe_str(row.get("phone")),
-                "경찰서": _safe_str(row.get("station_label")),
                 "업종": _display_business_type(row),
-                "주소": _full_address(row),
-                "위도": _safe_float(row.get("latitude"), 0.0),
-                "경도": _safe_float(row.get("longitude"), 0.0),
                 "연매출구간": _safe_str(row.get("sales_band")),
-                "연매출": _safe_int(row.get("annual_sales"), 0),
+                "연매출(원)": _safe_int(row.get("annual_sales"), 0),
+                "주소": _full_address(row),
+                "도로명주소": _safe_str(row.get("address_road")),
+                "상세주소": _safe_str(row.get("address_detail")),
+                "지번주소": _safe_str(row.get("address_jibun")),
+                "위도": _coord_for_export(row.get("latitude")),
+                "경도": _coord_for_export(row.get("longitude")),
+                "범죄불안경험": _safe_str(row.get("survey_crime_anxiety")),
+                "야간영업여부": _safe_str(row.get("survey_late_night")),
+                "주변환경": _safe_str(row.get("survey_dark_area")),
+                "단독근무": _safe_str(row.get("survey_single_worker")),
+                "점포내CCTV": _yes_no(row.get("has_cctv")),
+                "비상벨설치": _yes_no(row.get("has_emergency_bell")),
+                "사설경비이용": _security_company_text(row.get("uses_security_company")),
+                "기타방범시설": _safe_str(row.get("other_security")),
+                "신청사유": _safe_str(row.get("apply_reason")),
+                "기타메모": _safe_str(row.get("etc_note")),
                 "체감안전도": _felt_safety_score(row),
                 "CPO위험도": _cpo_risk_score(row),
                 "보안취약도": _security_vulnerability_score(row),
                 "총점": _total_score(row),
-                "상태": _status_label(row.get("current_status")),
-                "점포내CCTV": "있음" if bool(row.get("has_cctv")) else "없음",
-                "비상벨": "있음" if bool(row.get("has_emergency_bell")) else "없음",
-                "사설경비": "이용 중" if bool(row.get("uses_security_company")) else "이용하지 않음",
-                "접수일시": _format_submitted_text(row.get("submitted_at")),
                 "검토메모": _safe_str(row.get("review_comment")),
-                "추가서류요청": _safe_str(row.get("docs_request_comment")),
+                "추가서류요청내용": _safe_str(row.get("docs_request_comment")),
                 "제외사유": _safe_str(row.get("exclude_reason")),
             }
         )
@@ -1515,6 +1540,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         st.caption(
             f"목록에서 체크하면 해당 점포가 아래 지도와 상세정보에 바로 반영됩니다. 현재 체크 {len(checked_export_rows)}건 / 조회 결과 {len(filtered_rows)}건"
         )
+        st.caption("다운로드 파일은 현재 조회 조건 기준이며, 접수정보·위치정보·설문응답·점수·검토정보 컬럼이 함께 포함됩니다.")
     with list_btn1_col:
         st.write("")
         st.download_button(
