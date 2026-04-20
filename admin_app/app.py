@@ -6,7 +6,7 @@ from pages.cpo_view import cpo_page
 
 
 st.set_page_config(
-    page_title="소상공인 시스템",
+    page_title="소상공인 안전물품 지원 관리 시스템",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="collapsed",
