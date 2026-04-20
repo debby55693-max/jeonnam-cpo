@@ -1370,8 +1370,26 @@ def _render_review_history(supabase, application_id: Any):
 def _render_semas_reference_box():
     with st.container(border=True):
         st.markdown("#### 정책자금 지원 제외업종 참고")
-        st.caption("검토 중 제외업종 여부가 애매하면 아래 SEMAS 페이지를 바로 확인해주세요.")
+        st.caption("제외업종 여부가 애매하면 아래 SEMAS 페이지를 바로 확인해주세요.")
         st.markdown("- [소상공인시장진흥공단 정책자금 지원 제외업종 안내](https://ols.semas.or.kr/ols/pfa/SPFA207P/page.do)")
+
+
+def _render_cpo_flow_guide():
+    with st.container(border=True):
+        st.markdown("#### 한눈에 보는 관리 흐름")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.markdown("**1. 조회**")
+            st.caption("상단 필터로 경찰서·상태·기간을 걸고 접수 현황을 먼저 확인합니다.")
+        with c2:
+            st.markdown("**2. 우선 확인**")
+            st.caption("우선순위 표에서 먼저 볼 점포를 빠르게 확인합니다.")
+        with c3:
+            st.markdown("**3. 체크 후 검토**")
+            st.caption("접수 목록에서 체크하면 아래 지도와 상세정보가 함께 바뀝니다.")
+        with c4:
+            st.markdown("**4. 저장·다운로드**")
+            st.caption("상세정보에서 검토 저장 후 체크건 또는 전체건을 다운로드합니다.")
 
 
 def _validate_review_inputs(review_status: str, exclude_flag: bool, exclude_reason: str, docs_request_comment: str):
@@ -1443,7 +1461,6 @@ def _render_detail(
         station_options=station_options,
     )
 
-    _render_semas_reference_box()
     _render_review_history(supabase, row.get("application_id"))
 
     st.markdown("#### CPO 검토 입력")
@@ -1574,7 +1591,9 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     )
 
     _render_top_metrics(filtered_rows)
+    _render_cpo_flow_guide()
     _render_score_guide()
+    _render_semas_reference_box()
     _render_priority_table(filtered_rows)
 
     checked_ids_for_download = st.session_state.get("list_checked_application_ids", [])
@@ -1605,7 +1624,6 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         st.caption(
             f"목록에서 체크하면 해당 점포가 아래 지도와 상세정보에 바로 반영됩니다. 현재 체크 {len(checked_export_rows)}건 / 조회 결과 {len(filtered_rows)}건"
         )
-        st.caption("다운로드 파일은 현재 조회 조건 기준이며, 접수정보·위치정보·설문응답·점수·검토정보 컬럼이 함께 포함됩니다.")
     with list_select_all_col:
         st.write("")
         if st.button("조회결과 전체 체크", use_container_width=True, key="bulk_check_visible_rows"):
