@@ -713,22 +713,6 @@ def _summary_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
     return counts
 
 
-def _status_chip_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
-    counts = {
-        "접수완료": 0,
-        "검토중": 0,
-        "추가서류요청": 0,
-        "검토완료": 0,
-        "제외": 0,
-        "선정": 0,
-    }
-    for row in rows:
-        label = _status_label(row.get("current_status"))
-        if label in counts:
-            counts[label] += 1
-    return counts
-
-
 def _df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -1000,14 +984,13 @@ def _render_priority_table(rows: List[Dict[str, Any]]):
 
 def _render_top_metrics(rows: List[Dict[str, Any]]):
     counts = _summary_counts(rows)
-    chip_counts = _status_chip_counts(rows)
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("총 접수", f"{counts['총 접수']}건")
     c2.metric("검토완료", f"{counts['검토완료']}건")
     c3.metric("제외", f"{counts['제외']}건")
     c4.metric("선정", f"{counts['선정']}건")
     c5.metric("미검토", f"{counts['미검토']}건")
-    st.markdown(_status_summary_html(chip_counts), unsafe_allow_html=True)
+    st.markdown(_status_summary_html(counts), unsafe_allow_html=True)
 
 
 def _render_page_ui_css():
@@ -1037,6 +1020,17 @@ def _render_page_ui_css():
         div[data-testid="stButton"] > button,
         div[data-testid="stDownloadButton"] > button {
             min-height: 42px;
+            font-weight: 700;
+            white-space: nowrap;
+            letter-spacing: -0.01em;
+            border-radius: 12px;
+        }
+        .cpo-toolbar-note {
+            display: flex;
+            align-items: center;
+            min-height: 42px;
+            color: #475569;
+            font-size: 0.96rem;
             font-weight: 600;
         }
         div[data-testid="stTextInput"] label,
@@ -1062,13 +1056,7 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
         return []
 
     visible_ids = [row.get("application_id") for row in rows]
-    selectbox_selected_id = st.session_state.get("selected_application_selectbox")
     current_selected_id = st.session_state.get("selected_application_id")
-
-    if selectbox_selected_id in visible_ids and current_selected_id != selectbox_selected_id:
-        current_selected_id = selectbox_selected_id
-        st.session_state["selected_application_id"] = current_selected_id
-
     if current_selected_id is None or current_selected_id not in visible_ids:
         current_selected_id = rows[0].get("application_id")
         st.session_state["selected_application_id"] = current_selected_id
@@ -1150,7 +1138,7 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
         else:
             next_selected_id = checked_ids[-1]
     else:
-        next_selected_id = current_selected_id or rows[0].get("application_id")
+        next_selected_id = rows[0].get("application_id")
 
     if next_selected_id is not None:
         st.session_state["selected_application_id"] = next_selected_id
@@ -1862,23 +1850,20 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
 
     _render_section_heading("3", "접수 목록 선택 · 다운로드", f"선택 {len(checked_export_rows)}건 / 조회 결과 {len(filtered_rows)}건")
 
-    list_title_col, list_select_all_col, list_clear_col, list_btn1_col, list_btn2_col = st.columns([4, 1, 1, 1, 1])
+    list_title_col, list_select_all_col, list_clear_col, list_btn1_col, list_btn2_col = st.columns([3.6, 1.1, 1.1, 1.25, 1.25])
     with list_title_col:
-        st.markdown('<div class="cpo-page-note">조회된 접수를 선택하고 바로 다운로드할 수 있습니다.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="cpo-toolbar-note">조회된 접수를 선택하고 바로 다운로드할 수 있습니다.</div>', unsafe_allow_html=True)
     with list_select_all_col:
-        st.write("")
-        if st.button("조회 결과 전체 선택", use_container_width=True, key="bulk_check_visible_rows"):
+        if st.button("전체 선택", use_container_width=True, key="bulk_check_visible_rows"):
             _bulk_check_rows(filtered_rows)
             st.rerun()
     with list_clear_col:
-        st.write("")
         if st.button("선택 해제", use_container_width=True, key="bulk_clear_visible_rows"):
             _clear_checked_rows(filtered_rows)
             st.rerun()
     with list_btn1_col:
-        st.write("")
         st.download_button(
-            "선택 항목 다운로드",
+            "선택 다운로드",
             data=_df_to_excel_bytes(checked_export_df) if not checked_export_df.empty else b"",
             file_name=checked_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1887,9 +1872,8 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
             disabled=checked_export_df.empty,
         )
     with list_btn2_col:
-        st.write("")
         st.download_button(
-            "전체 결과 다운로드",
+            "전체 다운로드",
             data=_df_to_excel_bytes(all_export_df) if not all_export_df.empty else b"",
             file_name=all_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

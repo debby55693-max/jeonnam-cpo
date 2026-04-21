@@ -129,81 +129,53 @@ def _render_logged_in_sidebar():
             st.rerun()
 
 
-def _find_login_logo_path() -> Path | None:
+def _find_login_logo_path():
     root = Path(__file__).resolve().parents[2]
 
-    candidates = [
-        root / "assets" / "login_slogan.png",
-        root / "assets" / "login_slogan.jpg",
-        root / "assets" / "login_slogan.jpeg",
-        root / "assets" / "고범석 청장님 슬로건(두 줄).png",
-        root / "admin_app" / "assets" / "login_slogan.png",
-        root / "admin_app" / "assets" / "고범석 청장님 슬로건(두 줄).png",
+    search_dirs = [
+        root / "assets",
+        root / "admin_app" / "assets",
+        root / "survey_web",
+        root,
     ]
 
-    for path in candidates:
-        if path.exists():
-            return path
+    exact_candidates = [
+        "login_slogan.png",
+        "login_slogan.jpg",
+        "login_slogan.jpeg",
+        "logo_login.png",
+        "logo_login.jpg",
+        "logo_login.jpeg",
+        "slogan.png",
+        "slogan.jpg",
+        "slogan.jpeg",
+        "jeonnam_logo.png",
+        "고범석 청장님 슬로건(두 줄).png",
+        "고범석 청장님 슬로건(두 줄).jpg",
+        "고범석 청장님 슬로건(두 줄).jpeg",
+    ]
+
+    for base in search_dirs:
+        if not base.exists():
+            continue
+        for name in exact_candidates:
+            p = base / name
+            if p.exists() and p.is_file():
+                return p
+
+    keywords = ["슬로건", "slogan", "login", "logo", "jeonnam"]
+    extensions = ["*.png", "*.jpg", "*.jpeg", "*.webp"]
+
+    for base in search_dirs:
+        if not base.exists():
+            continue
+        for ext in extensions:
+            for p in base.rglob(ext):
+                lower_name = p.name.lower()
+                if any(keyword.lower() in lower_name for keyword in keywords):
+                    return p
 
     return None
-
-
-def _render_login_main(error_message: str = ""):
-    st.markdown(
-        """
-        <style>
-        .login-top-spacer {
-            height: 0.2rem;
-        }
-        .login-logo-wrap {
-            margin-top: 0.1rem;
-            margin-bottom: 0.5rem;
-        }
-        .login-title {
-            font-size: 2.3rem;
-            font-weight: 800;
-            margin: 0.2rem 0 0.2rem 0;
-            text-align: center;
-            color: #1f2a44;
-        }
-        .login-desc {
-            color: #666666;
-            margin-bottom: 1rem;
-            text-align: center;
-            font-size: 1rem;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown('<div class="login-top-spacer"></div>', unsafe_allow_html=True)
-
-    left, center, right = st.columns([1.2, 1.6, 1.2])
-
-    with center:
-        logo_path = _find_login_logo_path()
-        if logo_path:
-            st.markdown('<div class="login-logo-wrap">', unsafe_allow_html=True)
-            st.image(str(logo_path), use_container_width=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown('<div class="login-title">소상공인 시스템</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="login-desc">관리자 / CPO 계정으로 로그인해주세요.</div>',
-            unsafe_allow_html=True,
-        )
-
-        if error_message:
-            st.error(error_message)
-
-        with st.container(border=True):
-            with st.form("login_form_main", clear_on_submit=False):
-                email = st.text_input("이메일", key="login_email_main")
-                password = st.text_input("비밀번호", type="password", key="login_password_main")
-                submit = st.form_submit_button("로그인", use_container_width=True)
-
-    return email, password, submit
 
 
 def _friendly_login_error(exc: Exception) -> str:
@@ -252,6 +224,72 @@ def _sign_in_with_retry(supabase, email: str, password: str, retries: int = 3, w
                 continue
 
             raise last_error
+
+
+def _render_login_main(error_message: str = ""):
+    st.markdown(
+        """
+        <style>
+        .login-top-gap {
+            height: 0.1rem;
+        }
+        .login-title {
+            font-size: 2.35rem;
+            font-weight: 800;
+            margin: 0.1rem 0 0.2rem 0;
+            text-align: center;
+            color: #1f2a44;
+        }
+        .login-desc {
+            color: #666666;
+            margin-bottom: 0.9rem;
+            text-align: center;
+            font-size: 1rem;
+        }
+        .login-logo-wrap {
+            margin-top: 0.15rem;
+            margin-bottom: 0.45rem;
+        }
+        .login-card-wrap {
+            max-width: 560px;
+            margin: 0 auto;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="login-top-gap"></div>', unsafe_allow_html=True)
+
+    left, center, right = st.columns([1.15, 1.7, 1.15])
+
+    with center:
+        st.markdown('<div class="login-card-wrap">', unsafe_allow_html=True)
+
+        logo_path = _find_login_logo_path()
+        if logo_path:
+            st.markdown('<div class="login-logo-wrap">', unsafe_allow_html=True)
+            st.image(str(logo_path), use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown('<div class="login-title">소상공인 안전물품 관리 시스템</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="login-desc">관리자 / CPO 계정으로 로그인해주세요.</div>',
+            unsafe_allow_html=True,
+        )
+
+        if error_message:
+            st.error(error_message)
+
+        with st.container(border=True):
+            with st.form("login_form_main", clear_on_submit=False):
+                email = st.text_input("이메일", key="login_email_main")
+                password = st.text_input("비밀번호", type="password", key="login_password_main")
+                submit = st.form_submit_button("로그인", use_container_width=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    return email, password, submit
 
 
 def login_ui():
