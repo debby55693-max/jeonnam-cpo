@@ -20,6 +20,15 @@ STATUS_LABELS = {
     "selected": "선정",
 }
 
+STATUS_DISPLAY_META = {
+    "접수완료": {"icon": "⚪", "class": "submitted"},
+    "검토중": {"icon": "🟣", "class": "under-review"},
+    "추가서류요청": {"icon": "🟠", "class": "docs-requested"},
+    "검토완료": {"icon": "🔵", "class": "reviewed"},
+    "제외": {"icon": "⛔", "class": "excluded"},
+    "선정": {"icon": "🟢", "class": "selected"},
+}
+
 STATUS_FILTER_OPTIONS = ["전체", "접수완료", "검토중", "추가서류요청", "검토완료", "제외", "선정"]
 STATUS_VALUE_BY_LABEL = {v: k for k, v in STATUS_LABELS.items()}
 
@@ -155,6 +164,32 @@ def _review_status_value(label: str, exclude_flag: bool) -> str:
     if exclude_flag:
         return "excluded"
     return STATUS_VALUE_BY_LABEL.get(label, "reviewed")
+
+
+def _status_display_text(value: Any) -> str:
+    label = _status_label(_safe_str(value))
+    meta = STATUS_DISPLAY_META.get(label)
+    if not meta:
+        return label or "-"
+    return f"{meta['icon']} {label}"
+
+
+def _status_badge_html(value: Any) -> str:
+    label = _status_label(_safe_str(value))
+    meta = STATUS_DISPLAY_META.get(label, {"class": "neutral"})
+    css_class = meta.get("class", "neutral")
+    return f'<span class="cpo-status-chip {css_class}">{label or "-"}</span>'
+
+
+def _status_summary_html(counts: Dict[str, int]) -> str:
+    ordered_labels = ["접수완료", "검토중", "추가서류요청", "검토완료", "제외", "선정"]
+    chips = []
+    for label in ordered_labels:
+        meta = STATUS_DISPLAY_META.get(label, {"class": "neutral"})
+        css_class = meta.get("class", "neutral")
+        count = counts.get(label, 0)
+        chips.append(f'<span class="cpo-status-chip {css_class}">{label} {count}건</span>')
+    return '<div class="cpo-status-chip-row">' + ''.join(chips) + '</div>'
 
 
 def _display_business_type(row: Dict[str, Any]) -> str:
@@ -322,6 +357,62 @@ def _inject_page_styles():
             color: #334155;
             font-size: 13px;
             font-weight: 600;
+        }
+        .cpo-status-chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 10px 0 2px 0;
+        }
+        .cpo-status-chip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 30px;
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 13px;
+            font-weight: 700;
+            border: 1px solid transparent;
+            white-space: nowrap;
+        }
+        .cpo-status-chip.neutral {
+            background: #F8FAFC;
+            color: #334155;
+            border-color: #CBD5E1;
+        }
+        .cpo-status-chip.submitted {
+            background: #F8FAFC;
+            color: #475569;
+            border-color: #CBD5E1;
+        }
+        .cpo-status-chip.under-review {
+            background: #F5F3FF;
+            color: #6D28D9;
+            border-color: #DDD6FE;
+        }
+        .cpo-status-chip.docs-requested {
+            background: #FFF7ED;
+            color: #C2410C;
+            border-color: #FED7AA;
+        }
+        .cpo-status-chip.reviewed {
+            background: #EFF6FF;
+            color: #1D4ED8;
+            border-color: #BFDBFE;
+        }
+        .cpo-status-chip.excluded {
+            background: #FEF2F2;
+            color: #B91C1C;
+            border-color: #FECACA;
+        }
+        .cpo-status-chip.selected {
+            background: #F0FDF4;
+            color: #15803D;
+            border-color: #BBF7D0;
+        }
+        .cpo-status-current-row {
+            margin: 4px 0 12px 0;
         }
         </style>
         """,
@@ -746,7 +837,7 @@ def _sync_selected_row_by_selectbox(rows: List[Dict[str, Any]]):
                 "application_id": row.get("application_id"),
                 "label": (
                     f"{_safe_str(row.get('business_name'))} | {_safe_str(row.get('station_label')) or '-'} | "
-                    f"{_status_label(row.get('current_status'))} | 총점 {_total_score(row)}점 | "
+                    f"{_status_display_text(row.get('current_status'))} | 총점 {_total_score(row)}점 | "
                     f"{_format_submitted_text(row.get('submitted_at'))}"
                 ),
             }
@@ -881,7 +972,7 @@ def _render_priority_table(rows: List[Dict[str, Any]]):
                 "CPO위험도": _cpo_risk_score(row),
                 "보안취약도": _security_vulnerability_score(row),
                 "총점": _total_score(row),
-                "상태": _status_label(row.get("current_status")),
+                "상태": _status_display_text(row.get("current_status")),
             }
         )
 
@@ -899,6 +990,7 @@ def _render_top_metrics(rows: List[Dict[str, Any]]):
     c3.metric("제외", f"{counts['제외']}건")
     c4.metric("선정", f"{counts['선정']}건")
     c5.metric("미검토", f"{counts['미검토']}건")
+    st.markdown(_status_summary_html(counts), unsafe_allow_html=True)
 
 
 def _render_page_ui_css():
@@ -984,7 +1076,7 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
                 "CPO위험도": _cpo_risk_score(row),
                 "보안취약도": _security_vulnerability_score(row),
                 "총점": _total_score(row),
-                "상태": _status_label(row.get("current_status")),
+                "상태": _status_display_text(row.get("current_status")),
             }
         )
 
@@ -1118,6 +1210,7 @@ def _delete_application(supabase, application_id: Any):
 def _render_detail_summary_cards(row: Dict[str, Any]):
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("현재 상태", _status_label(row.get("current_status")) or "-")
+    c1.markdown(f'<div class="cpo-status-current-row">{_status_badge_html(row.get("current_status"))}</div>', unsafe_allow_html=True)
     c2.metric("체감안전도", f"{_felt_safety_score(row)}점")
     c3.metric("CPO위험도", f"{_cpo_risk_score(row)}점")
     c4.metric("총점", f"{_total_score(row)}점")
@@ -1484,7 +1577,7 @@ def _render_review_history(supabase, application_id: Any):
             {
                 "번호": idx,
                 "검토일시": _format_submitted_text(item.get("reviewed_at")),
-                "검토상태": _status_label(item.get("review_result")),
+                "검토상태": _status_display_text(item.get("review_result")),
                 "CPO위험도": _safe_str(item.get("cpo_risk_label")) or "-",
                 "제외여부": "예" if bool(item.get("is_excluded")) else "아니오",
                 "제외사유": _safe_str(item.get("exclude_reason")) or "-",
@@ -1528,6 +1621,7 @@ def _render_detail(
 ):
     st.markdown("### 점포 상세정보")
     st.caption("선택한 접수건의 기본정보, 주소 수정, 검토 이력을 아래에서 이어서 확인합니다.")
+    st.markdown(f'<div class="cpo-status-current-row">현재 상태 {_status_badge_html(row.get("current_status"))}</div>', unsafe_allow_html=True)
     _render_detail_summary_cards(row)
 
     c1, c2 = st.columns(2)
@@ -1583,6 +1677,7 @@ def _render_detail(
     _render_review_history(supabase, row.get("application_id"))
 
     st.markdown("#### CPO 검토 입력")
+    st.markdown(f'<div class="cpo-status-current-row">저장 전 현재 상태 {_status_badge_html(row.get("current_status"))}</div>', unsafe_allow_html=True)
     st.caption("검토 결과를 저장하면 cpo_reviews에 이력이 쌓이고, applications의 현재 상태도 함께 변경됩니다.")
 
     with st.form(f"review_form_{row.get('application_id')}"):
