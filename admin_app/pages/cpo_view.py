@@ -695,6 +695,9 @@ def _apply_filters(
 def _summary_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
     counts = {
         "총 접수": len(rows),
+        "접수완료": 0,
+        "검토중": 0,
+        "추가서류요청": 0,
         "검토완료": 0,
         "제외": 0,
         "선정": 0,
@@ -702,13 +705,9 @@ def _summary_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
     }
     for row in rows:
         status = _status_label(row.get("current_status"))
-        if status == "검토완료":
-            counts["검토완료"] += 1
-        elif status == "제외":
-            counts["제외"] += 1
-        elif status == "선정":
-            counts["선정"] += 1
-        elif status in ["접수완료", "검토중", "추가서류요청"]:
+        if status in counts:
+            counts[status] += 1
+        if status in ["접수완료", "검토중", "추가서류요청"]:
             counts["미검토"] += 1
     return counts
 
@@ -1127,7 +1126,10 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
         else:
             next_selected_id = checked_ids[-1]
     else:
-        next_selected_id = rows[0].get("application_id")
+        if current_selected_id in visible_ids:
+            next_selected_id = current_selected_id
+        else:
+            next_selected_id = rows[0].get("application_id")
 
     if next_selected_id is not None:
         st.session_state["selected_application_id"] = next_selected_id
