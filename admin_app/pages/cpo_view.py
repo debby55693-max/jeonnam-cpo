@@ -695,9 +695,6 @@ def _apply_filters(
 def _summary_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
     counts = {
         "총 접수": len(rows),
-        "접수완료": 0,
-        "검토중": 0,
-        "추가서류요청": 0,
         "검토완료": 0,
         "제외": 0,
         "선정": 0,
@@ -705,10 +702,30 @@ def _summary_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
     }
     for row in rows:
         status = _status_label(row.get("current_status"))
-        if status in counts:
-            counts[status] += 1
-        if status in ["접수완료", "검토중", "추가서류요청"]:
+        if status == "검토완료":
+            counts["검토완료"] += 1
+        elif status == "제외":
+            counts["제외"] += 1
+        elif status == "선정":
+            counts["선정"] += 1
+        elif status in ["접수완료", "검토중", "추가서류요청"]:
             counts["미검토"] += 1
+    return counts
+
+
+def _status_chip_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
+    counts = {
+        "접수완료": 0,
+        "검토중": 0,
+        "추가서류요청": 0,
+        "검토완료": 0,
+        "제외": 0,
+        "선정": 0,
+    }
+    for row in rows:
+        label = _status_label(row.get("current_status"))
+        if label in counts:
+            counts[label] += 1
     return counts
 
 
@@ -983,13 +1000,14 @@ def _render_priority_table(rows: List[Dict[str, Any]]):
 
 def _render_top_metrics(rows: List[Dict[str, Any]]):
     counts = _summary_counts(rows)
+    chip_counts = _status_chip_counts(rows)
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("총 접수", f"{counts['총 접수']}건")
     c2.metric("검토완료", f"{counts['검토완료']}건")
     c3.metric("제외", f"{counts['제외']}건")
     c4.metric("선정", f"{counts['선정']}건")
     c5.metric("미검토", f"{counts['미검토']}건")
-    st.markdown(_status_summary_html(counts), unsafe_allow_html=True)
+    st.markdown(_status_summary_html(chip_counts), unsafe_allow_html=True)
 
 
 def _render_page_ui_css():
@@ -1044,7 +1062,13 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
         return []
 
     visible_ids = [row.get("application_id") for row in rows]
+    selectbox_selected_id = st.session_state.get("selected_application_selectbox")
     current_selected_id = st.session_state.get("selected_application_id")
+
+    if selectbox_selected_id in visible_ids and current_selected_id != selectbox_selected_id:
+        current_selected_id = selectbox_selected_id
+        st.session_state["selected_application_id"] = current_selected_id
+
     if current_selected_id is None or current_selected_id not in visible_ids:
         current_selected_id = rows[0].get("application_id")
         st.session_state["selected_application_id"] = current_selected_id
@@ -1126,10 +1150,7 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
         else:
             next_selected_id = checked_ids[-1]
     else:
-        if current_selected_id in visible_ids:
-            next_selected_id = current_selected_id
-        else:
-            next_selected_id = rows[0].get("application_id")
+        next_selected_id = current_selected_id or rows[0].get("application_id")
 
     if next_selected_id is not None:
         st.session_state["selected_application_id"] = next_selected_id
