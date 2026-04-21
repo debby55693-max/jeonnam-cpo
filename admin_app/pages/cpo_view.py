@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from io import BytesIO
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -196,19 +195,6 @@ def _format_coord(value: Any) -> str:
     return f"{num:.6f}" if num else "-"
 
 
-def _yes_no(value: Any) -> str:
-    return "예" if bool(value) else "아니오"
-
-
-def _security_company_text(value: Any) -> str:
-    return "이용 중" if bool(value) else "이용하지 않음"
-
-
-def _coord_for_export(value: Any) -> Any:
-    num = _safe_float(value, 0.0)
-    return round(num, 6) if num else ""
-
-
 def _felt_safety_score(row: Dict[str, Any]) -> int:
     return max(0, min(40, _safe_int(row.get("felt_safety_score"), 0)))
 
@@ -257,92 +243,6 @@ def _get_secret_first(*keys: str) -> str:
     return ""
 
 
-def _inject_page_styles():
-    st.markdown(
-        """
-        <style>
-        .cpo-step-title {
-            margin: 20px 0 12px 0;
-            padding: 0 0 12px 0;
-            border-bottom: 3px solid #D7E3F4;
-        }
-        .cpo-step-badge {
-            display: inline-block;
-            min-width: 34px;
-            height: 34px;
-            line-height: 34px;
-            text-align: center;
-            border-radius: 999px;
-            background: #E8F1FF;
-            color: #1E40AF;
-            font-weight: 800;
-            margin-right: 10px;
-            font-size: 16px;
-            vertical-align: middle;
-        }
-        .cpo-step-text {
-            display: inline-block;
-            font-size: 26px;
-            font-weight: 800;
-            color: #0F172A;
-            letter-spacing: -0.2px;
-            vertical-align: middle;
-        }
-        .cpo-step-help {
-            margin-top: 7px;
-            margin-left: 46px;
-            color: #475569;
-            font-size: 13px;
-            line-height: 1.5;
-        }
-        .cpo-inline-guide {
-            padding: 0 0 10px 0;
-            color: #475569;
-            font-size: 13px;
-            line-height: 1.6;
-        }
-        .cpo-inline-guide a {
-            color: #1D4ED8;
-            text-decoration: none;
-            font-weight: 700;
-        }
-        .cpo-page-note {
-            margin: 2px 0 6px 0;
-            color: #334155;
-            font-size: 14px;
-            font-weight: 600;
-        }
-        .cpo-subtle-note {
-            margin: 4px 0 10px 0;
-            color: #64748B;
-            font-size: 12px;
-        }
-        .cpo-list-toolbar-label {
-            margin-top: 10px;
-            color: #334155;
-            font-size: 13px;
-            font-weight: 600;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def _render_section_heading(step_no: str, title: str, help_text: str = ""):
-    help_html = f'<div class="cpo-step-help">{help_text}</div>' if help_text else ""
-    st.markdown(
-        f"""
-        <div class="cpo-step-title">
-            <span class="cpo-step-badge">{step_no}</span>
-            <span class="cpo-step-text">{title}</span>
-            {help_html}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def _get_juso_search_key() -> str:
     return _get_secret_first(
         "JUSO_CONFM_KEY",
@@ -375,6 +275,55 @@ def _get_vworld_api_key() -> str:
         "vworld_api_key",
         "vworld_key",
     )
+
+
+def _friendly_request_error(exc: Exception, context: str = "주소 검색") -> str:
+    text = _safe_str(exc)
+    lower = text.lower()
+
+    if isinstance(exc, requests.exceptions.Timeout) or "timed out" in lower:
+        return f"{context} 서버 응답이 지연되고 있습니다. 잠시 후 다시 시도해주세요."
+    if isinstance(exc, requests.exceptions.ConnectionError) or "max retries exceeded" in lower or "failed to establish" in lower:
+        return f"{context} 서버 연결이 원활하지 않습니다. 잠시 후 다시 시도해주세요."
+    if "승인되지 않은 key" in lower or "invalid key" in lower:
+        return f"{context} API 키 설정을 확인해주세요."
+    if text and "http" not in lower and len(text) <= 120:
+        return text
+    return f"{context} 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+
+
+def _search_addresses_with_fallback(query: str) -> Tuple[List[Dict[str, Any]], str, str]:
+    query = _safe_str(query)
+    if not query:
+        return [], "주소를 먼저 입력해주세요.", "warning"
+
+    try:
+        results = _search_juso_addresses(query)
+        if results:
+            return results, f"검색 결과 {len(results)}건을 찾았습니다. 아래에서 주소를 선택해주세요.", "info"
+    except Exception as exc:
+        juso_error = exc
+    else:
+        juso_error = None
+
+    lat, lon, official = _coord_from_vworld(query)
+    if lat is not None and lon is not None:
+        candidate = {
+            "roadAddr": official or query,
+            "jibunAddr": "",
+            "_resolved_address": official or query,
+            "_lat": float(lat),
+            "_lon": float(lon),
+            "_source": "vworld_direct",
+        }
+        if juso_error:
+            return [candidate], "주소검색 서버 응답이 지연되어 현재 입력 주소 기준 결과 1건으로 대체했습니다.", "warning"
+        return [candidate], "검색 결과가 없어 현재 입력 주소 기준 결과 1건을 찾았습니다.", "warning"
+
+    if juso_error:
+        raise Exception(_friendly_request_error(juso_error, "주소 검색"))
+
+    return [], "검색 결과가 없습니다. 시/군/구와 도로명, 건물번호를 더 자세히 입력해주세요.", "warning"
 
 
 def _search_juso_addresses(query: str) -> List[Dict[str, Any]]:
@@ -503,6 +452,12 @@ def _resolve_candidate_to_address_and_coord(candidate: Dict[str, Any]) -> Tuple[
     jibun_addr = _safe_str(candidate.get("jibunAddr"))
     official_address = road_addr or jibun_addr
 
+    fallback_address = _safe_str(candidate.get("_resolved_address"))
+    fallback_lat = candidate.get("_lat")
+    fallback_lon = candidate.get("_lon")
+    if fallback_address and fallback_lat is not None and fallback_lon is not None:
+        return fallback_address, float(fallback_lat), float(fallback_lon)
+
     lat, lon = _coord_from_juso_candidate(candidate)
     if lat is not None and lon is not None:
         return official_address, float(lat), float(lon)
@@ -629,91 +584,32 @@ def _df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     return output.getvalue()
 
 
-def _sanitize_filename_text(value: Any, fallback: str = "all") -> str:
-    text = _safe_str(value)
-    if not text or text == "전체":
-        return fallback
-    text = re.sub(r"\s+", "_", text)
-    text = re.sub(r"[^0-9A-Za-z가-힣_\-]", "", text)
-    return text or fallback
-
-
-def _build_download_filename(
-    kind: str,
-    selected_station: str,
-    status_filter: str,
-    date_from: date,
-    date_to: date,
-    row_count: int,
-) -> str:
-    station_part = _sanitize_filename_text(selected_station, fallback="all_station")
-    status_part = _sanitize_filename_text(status_filter, fallback="all_status")
-    date_part = f"{date_from.strftime('%Y%m%d')}_{date_to.strftime('%Y%m%d')}"
-    return f"applications_{kind}_{station_part}_{status_part}_{date_part}_{row_count}건.xlsx"
-
-
-def _bump_table_editor_nonce():
-    st.session_state["applications_table_editor_nonce"] = int(st.session_state.get("applications_table_editor_nonce", 0)) + 1
-
-
-def _bulk_check_rows(rows: List[Dict[str, Any]]):
-    visible_ids = [row.get("application_id") for row in rows if row.get("application_id") is not None]
-    st.session_state["list_checked_application_ids"] = visible_ids
-    if visible_ids:
-        st.session_state["selected_application_id"] = visible_ids[0]
-        st.session_state["selected_application_selectbox"] = visible_ids[0]
-    _bump_table_editor_nonce()
-
-
-def _clear_checked_rows(rows: List[Dict[str, Any]]):
-    visible_ids = {row.get("application_id") for row in rows if row.get("application_id") is not None}
-    stored_ids = st.session_state.get("list_checked_application_ids", [])
-    st.session_state["list_checked_application_ids"] = [x for x in stored_ids if x not in visible_ids]
-    if rows and st.session_state.get("selected_application_id") not in visible_ids:
-        first_id = rows[0].get("application_id")
-        st.session_state["selected_application_id"] = first_id
-        st.session_state["selected_application_selectbox"] = first_id
-    _bump_table_editor_nonce()
-
-
 def _build_export_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
     data = []
-    for idx, row in enumerate(rows, start=1):
+    for row in rows:
         data.append(
             {
-                "번호": idx,
-                "신청ID": _safe_str(row.get("application_id")),
-                "현재상태": _status_label(row.get("current_status")),
-                "접수일시": _format_submitted_text(row.get("submitted_at")),
-                "관할경찰서": _safe_str(row.get("station_label")),
                 "점포명": _safe_str(row.get("business_name")),
                 "신청인": _safe_str(row.get("applicant_name")),
                 "연락처": _safe_str(row.get("phone")),
+                "경찰서": _safe_str(row.get("station_label")),
                 "업종": _display_business_type(row),
-                "연매출구간": _safe_str(row.get("sales_band")),
-                "연매출(원)": _safe_int(row.get("annual_sales"), 0),
                 "주소": _full_address(row),
-                "도로명주소": _safe_str(row.get("address_road")),
-                "상세주소": _safe_str(row.get("address_detail")),
-                "지번주소": _safe_str(row.get("address_jibun")),
-                "위도": _coord_for_export(row.get("latitude")),
-                "경도": _coord_for_export(row.get("longitude")),
-                "범죄불안경험": _safe_str(row.get("survey_crime_anxiety")),
-                "야간영업여부": _safe_str(row.get("survey_late_night")),
-                "주변환경": _safe_str(row.get("survey_dark_area")),
-                "단독근무": _safe_str(row.get("survey_single_worker")),
-                "점포내CCTV": _yes_no(row.get("has_cctv")),
-                "비상벨설치": _yes_no(row.get("has_emergency_bell")),
-                "사설경비이용": _security_company_text(row.get("uses_security_company")),
-                "기타방범시설": _safe_str(row.get("other_security")),
-                "신청사유": _safe_str(row.get("apply_reason")),
-                "기타메모": _safe_str(row.get("etc_note")),
+                "위도": _safe_float(row.get("latitude"), 0.0),
+                "경도": _safe_float(row.get("longitude"), 0.0),
+                "연매출구간": _safe_str(row.get("sales_band")),
+                "연매출": _safe_int(row.get("annual_sales"), 0),
                 "체감안전도": _felt_safety_score(row),
                 "CPO위험도": _cpo_risk_score(row),
                 "보안취약도": _security_vulnerability_score(row),
                 "총점": _total_score(row),
+                "상태": _status_label(row.get("current_status")),
+                "점포내CCTV": "있음" if bool(row.get("has_cctv")) else "없음",
+                "비상벨": "있음" if bool(row.get("has_emergency_bell")) else "없음",
+                "사설경비": "이용 중" if bool(row.get("uses_security_company")) else "이용하지 않음",
+                "접수일시": _format_submitted_text(row.get("submitted_at")),
                 "검토메모": _safe_str(row.get("review_comment")),
-                "추가서류요청내용": _safe_str(row.get("docs_request_comment")),
+                "추가서류요청": _safe_str(row.get("docs_request_comment")),
                 "제외사유": _safe_str(row.get("exclude_reason")),
             }
         )
@@ -836,7 +732,7 @@ def _render_map(rows: List[Dict[str, Any]], selected_row: Optional[Dict[str, Any
 
 
 def _render_score_guide():
-    with st.expander("점수 산정 기준 보기", expanded=True):
+    with st.expander("우선순위 현황", expanded=True):
         st.markdown(
             """
 **우선순위는 아래 항목을 합산하여 산정합니다.**
@@ -901,6 +797,22 @@ def _render_top_metrics(rows: List[Dict[str, Any]]):
     c5.metric("미검토", f"{counts['미검토']}건")
 
 
+def _render_section_title(step_no: int, title: str, caption: str = ""):
+    caption_html = f'<div style="margin-top:4px; color:#6b7280; font-size:0.92rem;">{caption}</div>' if caption else ""
+    st.markdown(
+        f"""
+        <div style="margin-top:18px; margin-bottom:8px; padding-bottom:8px; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <span style="display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:999px; background:#eef4ff; color:#1d4ed8; font-weight:700;">{step_no}</span>
+                <span style="font-size:1.18rem; font-weight:700; color:#111827;">{title}</span>
+            </div>
+            {caption_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
     if not rows:
         st.info("조회 결과가 없습니다.")
@@ -945,6 +857,7 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
         )
 
     editor_df = pd.DataFrame(table_rows)
+    editor_key = f"applications_table_editor_{st.session_state.get('applications_table_editor_version', 0)}"
     edited_df = st.data_editor(
         editor_df,
         use_container_width=True,
@@ -974,7 +887,7 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
                 help="체크하면 해당 점포가 아래 지도와 상세정보에 바로 반영되고, 체크한 점포만 다운로드할 수 있습니다.",
             ),
         },
-        key=f"applications_table_editor_{int(st.session_state.get('applications_table_editor_nonce', 0))}",
+        key=editor_key,
     )
 
     checked_ids = edited_df.loc[edited_df["선택"] == True, "_application_id"].tolist()
@@ -1122,6 +1035,7 @@ def _ensure_edit_state(row: Dict[str, Any], station_options: List[str]):
         f"{prefix}uses_security_company": bool(row.get("uses_security_company")),
         f"{prefix}other_security": _safe_str(row.get("other_security")),
         f"{prefix}search_message": "",
+        f"{prefix}search_message_type": "info",
         f"{prefix}search_results": [],
         f"{prefix}selected_search_idx": 0,
         f"{prefix}pending_address_apply": None,
@@ -1145,6 +1059,8 @@ def _ensure_edit_state(row: Dict[str, Any], station_options: List[str]):
     if isinstance(pending_apply, dict):
         if "search_message" in pending_apply:
             st.session_state[f"{prefix}search_message"] = pending_apply.get("search_message") or ""
+        if "search_message_type" in pending_apply:
+            st.session_state[f"{prefix}search_message_type"] = _safe_str(pending_apply.get("search_message_type")) or "info"
         if "selected_search_idx" in pending_apply:
             st.session_state[f"{prefix}selected_search_idx"] = _safe_int(pending_apply.get("selected_search_idx"), 0)
         if "address_query" in pending_apply:
@@ -1230,27 +1146,30 @@ def _render_application_edit_section(
             try:
                 query = _safe_str(st.session_state.get(address_query_widget_key))
                 st.session_state[f"{prefix}address_query"] = query
-                if not query:
-                    st.session_state[f"{prefix}search_message"] = "주소를 먼저 입력해주세요."
-                    st.session_state[f"{prefix}search_results"] = []
-                else:
-                    results = _search_juso_addresses(query)
-                    st.session_state[f"{prefix}search_results"] = results
-                    st.session_state[f"{prefix}selected_search_idx"] = 0
-                    if results:
-                        st.session_state[f"{prefix}search_message"] = f"검색 결과 {len(results)}건을 찾았습니다. 아래에서 주소를 선택해주세요."
-                    else:
-                        st.session_state[f"{prefix}search_message"] = "검색 결과가 없습니다. 시/군/구와 도로명, 건물번호를 더 자세히 입력해주세요."
+                results, message, message_type = _search_addresses_with_fallback(query)
+                st.session_state[f"{prefix}search_results"] = results
+                st.session_state[f"{prefix}selected_search_idx"] = 0
+                st.session_state[f"{prefix}search_message"] = message
+                st.session_state[f"{prefix}search_message_type"] = message_type
                 st.session_state[f"{prefix}sync_widgets"] = True
                 st.rerun()
             except Exception as exc:
                 st.session_state[f"{prefix}search_results"] = []
-                st.session_state[f"{prefix}search_message"] = f"주소 검색 실패: {exc}"
+                st.session_state[f"{prefix}search_message"] = _friendly_request_error(exc, "주소 검색")
+                st.session_state[f"{prefix}search_message_type"] = "error"
                 st.rerun()
 
         msg = _safe_str(st.session_state.get(f"{prefix}search_message"))
+        msg_type = _safe_str(st.session_state.get(f"{prefix}search_message_type")) or "info"
         if msg:
-            st.caption(msg)
+            if msg_type == "success":
+                st.success(msg)
+            elif msg_type == "warning":
+                st.warning(msg)
+            elif msg_type == "error":
+                st.error(msg)
+            else:
+                st.info(msg)
 
         search_results = st.session_state.get(f"{prefix}search_results", []) or []
         if search_results:
@@ -1277,6 +1196,7 @@ def _render_application_edit_section(
                     inferred_station_label = _infer_station_label_from_address(chosen_address, station_label_options)
                     st.session_state[f"{prefix}pending_address_apply"] = {
                         "search_message": "선택한 주소를 반영했습니다. 저장하면 지도 위치도 함께 변경됩니다.",
+                        "search_message_type": "success",
                         "selected_search_idx": selected_idx,
                         "address_query": chosen_address,
                         "resolved_address": chosen_address,
@@ -1286,7 +1206,8 @@ def _render_application_edit_section(
                     }
                     st.rerun()
                 except Exception as exc:
-                    st.session_state[f"{prefix}search_message"] = f"주소 반영 실패: {exc}"
+                    st.session_state[f"{prefix}search_message"] = _friendly_request_error(exc, "주소 반영")
+                    st.session_state[f"{prefix}search_message_type"] = "error"
                     st.rerun()
 
         st.text_input(
@@ -1453,16 +1374,10 @@ def _render_review_history(supabase, application_id: Any):
     st.dataframe(pd.DataFrame(history_data), use_container_width=True, hide_index=True)
 
 
-def _render_semas_reference_box():
+def _render_semas_reference_inline():
     st.markdown(
-        """
-        <div class="cpo-inline-guide">
-            🔎 <strong>정책자금 지원 제외업종 참고</strong>
-            · <a href="https://ols.semas.or.kr/ols/pfa/SPFA207P/page.do" target="_blank">SEMAS 제외업종 바로가기</a>
-            <span style="margin-left:8px;">제외 여부가 애매하면 저장 전에 바로 확인하세요.</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
+        "정책자금 지원 제외업종 참고: "
+        "[소상공인시장진흥공단 정책자금 지원 제외업종 안내](https://ols.semas.or.kr/ols/pfa/SPFA207P/page.do)"
     )
 
 
@@ -1610,7 +1525,6 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     station_map = _fetch_station_map(supabase)
     station_label_options = _unique_station_options((station_options or []) + list(station_map.keys()))
 
-    _inject_page_styles()
     st.title("전남경찰청 CPO 관리시스템")
 
     raw_rows = _fetch_rows(supabase)
@@ -1624,7 +1538,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         if admin_station_default not in admin_station_options:
             admin_station_default = "전체"
 
-        st.markdown(f'<div class="cpo-page-note">현재 선택 경찰서: {admin_station_default}</div>', unsafe_allow_html=True)
+        st.caption(f"현재 선택 경찰서: {admin_station_default}")
 
         f0, f1, f2, f3, f4 = st.columns([2, 2, 2, 2, 3])
         with f0:
@@ -1643,7 +1557,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         with f4:
             keyword = st.text_input("점포명 / 신청인 / 주소 검색", key="keyword")
     else:
-        st.markdown(f'<div class="cpo-page-note">관할 경찰서: {selected_station}</div>', unsafe_allow_html=True)
+        st.caption(f"관할 경찰서: {selected_station}")
 
         f1, f2, f3, f4 = st.columns([2, 2, 2, 3])
         with f1:
@@ -1654,8 +1568,6 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
             date_to = st.date_input("접수 종료일", value=today, key="date_to")
         with f4:
             keyword = st.text_input("점포명 / 신청인 / 주소 검색", key="keyword")
-
-    _render_section_heading("1", "접수 조회", "경찰서·상태·기간·검색어를 먼저 정한 뒤 아래 목록과 지도 대상을 확인합니다.")
 
     filtered_rows = _apply_filters(
         rows=raw_rows,
@@ -1669,9 +1581,9 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
 
     _render_top_metrics(filtered_rows)
 
-    _render_section_heading("2", "우선 검토 대상 확인", "점수가 높은 점포를 먼저 살펴보고 제외업종 여부를 함께 확인합니다.")
+    _render_section_title(1, "우선 검토 대상 확인", "점수 기준과 상위 우선순위를 먼저 확인합니다.")
     _render_score_guide()
-    _render_semas_reference_box()
+    _render_semas_reference_inline()
     _render_priority_table(filtered_rows)
 
     checked_ids_for_download = st.session_state.get("list_checked_application_ids", [])
@@ -1679,55 +1591,41 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     checked_export_df = _build_export_df(checked_export_rows) if checked_export_rows else pd.DataFrame()
     all_export_df = _build_export_df(filtered_rows) if filtered_rows else pd.DataFrame()
 
-    checked_filename = _build_download_filename(
-        kind="checked",
-        selected_station=selected_station if role != "admin" else st.session_state.get("admin_station_filter", "전체"),
-        status_filter=status_filter,
-        date_from=date_from,
-        date_to=date_to,
-        row_count=len(checked_export_rows),
-    )
-    all_filename = _build_download_filename(
-        kind="all",
-        selected_station=selected_station if role != "admin" else st.session_state.get("admin_station_filter", "전체"),
-        status_filter=status_filter,
-        date_from=date_from,
-        date_to=date_to,
-        row_count=len(filtered_rows),
-    )
-
-    _render_section_heading("3", "접수 목록 선택 · 다운로드", f"선택 {len(checked_export_rows)}건 / 조회 결과 {len(filtered_rows)}건")
-
-    list_title_col, list_select_all_col, list_clear_col, list_btn1_col, list_btn2_col = st.columns([4, 1, 1, 1, 1])
-    with list_title_col:
-        st.markdown('<div class="cpo-page-note">조회된 접수를 선택하고 바로 다운로드할 수 있습니다.</div>', unsafe_allow_html=True)
-    with list_select_all_col:
-        st.write("")
-        if st.button("조회 결과 전체 선택", use_container_width=True, key="bulk_check_visible_rows"):
-            _bulk_check_rows(filtered_rows)
-            st.rerun()
-    with list_clear_col:
-        st.write("")
-        if st.button("선택 해제", use_container_width=True, key="bulk_clear_visible_rows"):
-            _clear_checked_rows(filtered_rows)
-            st.rerun()
+    _render_section_title(2, "접수 목록 선택 · 다운로드")
+    list_btn1_col, list_btn2_col, list_btn3_col, list_btn4_col = st.columns([1, 1, 1, 1])
     with list_btn1_col:
-        st.write("")
+        if st.button("조회 결과 전체 선택", use_container_width=True, key="select_all_visible_rows"):
+            st.session_state["list_checked_application_ids"] = [row.get("application_id") for row in filtered_rows]
+            st.session_state["applications_table_editor_version"] = st.session_state.get("applications_table_editor_version", 0) + 1
+            if filtered_rows:
+                first_id = filtered_rows[0].get("application_id")
+                st.session_state["selected_application_id"] = first_id
+                st.session_state["selected_application_selectbox"] = first_id
+            st.rerun()
+    with list_btn2_col:
+        if st.button("선택 해제", use_container_width=True, key="clear_visible_rows"):
+            st.session_state["list_checked_application_ids"] = []
+            st.session_state["applications_table_editor_version"] = st.session_state.get("applications_table_editor_version", 0) + 1
+            if filtered_rows:
+                first_id = filtered_rows[0].get("application_id")
+                st.session_state["selected_application_id"] = first_id
+                st.session_state["selected_application_selectbox"] = first_id
+            st.rerun()
+    with list_btn3_col:
         st.download_button(
             "선택 항목 다운로드",
             data=_df_to_excel_bytes(checked_export_df) if not checked_export_df.empty else b"",
-            file_name=checked_filename,
+            file_name=f"applications_checked_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
             key="download_checked_applications_top",
             disabled=checked_export_df.empty,
         )
-    with list_btn2_col:
-        st.write("")
+    with list_btn4_col:
         st.download_button(
             "전체 결과 다운로드",
             data=_df_to_excel_bytes(all_export_df) if not all_export_df.empty else b"",
-            file_name=all_filename,
+            file_name=f"applications_all_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
             key="download_all_applications_top",
@@ -1736,9 +1634,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
 
     _render_list_table(filtered_rows)
 
-    _render_section_heading("4", "지도 확인 · 상세 검토 저장", "목록에서 선택한 점포의 위치를 확인하고 아래에서 검토 내용을 저장합니다.")
-    st.markdown("### 선택 접수 지도")
-    st.markdown('<div class="cpo-subtle-note">목록에서 체크한 항목이 아니라 현재 선택된 1건을 중심으로 지도와 상세정보가 바뀝니다.</div>', unsafe_allow_html=True)
+    _render_section_title(3, "선택 접수 지도", "선택한 접수건의 위치와 주변 접수 분포를 함께 확인합니다.")
     selected_row = _selected_row(filtered_rows)
 
     if filtered_rows:
@@ -1747,7 +1643,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
 
         n1, n2, n3 = st.columns([1, 1, 3])
         with n1:
-            if st.button("이전 신청", use_container_width=True):
+            if st.button("이전 점포", use_container_width=True):
                 ids = [row.get("application_id") for row in filtered_rows]
                 current_id = st.session_state.get("selected_application_id")
                 if current_id not in ids:
@@ -1759,7 +1655,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
                 st.session_state["selected_application_selectbox"] = st.session_state.get("selected_application_id")
                 st.rerun()
         with n2:
-            if st.button("다음 신청", use_container_width=True):
+            if st.button("다음 점포", use_container_width=True):
                 ids = [row.get("application_id") for row in filtered_rows]
                 current_id = st.session_state.get("selected_application_id")
                 if current_id not in ids:
@@ -1771,7 +1667,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
                 st.session_state["selected_application_selectbox"] = st.session_state.get("selected_application_id")
                 st.rerun()
         with n3:
-            st.markdown('<div class="cpo-subtle-note">접수 목록에서 선택을 바꾸면 지도와 아래 상세정보가 함께 바뀝니다.</div>', unsafe_allow_html=True)
+            st.caption("목록에서 체크하거나 선택 점포를 바꾸면 지도와 아래 상세정보가 함께 바뀝니다.")
 
         _render_map(filtered_rows, selected_row)
 
@@ -1787,6 +1683,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     if not filtered_rows or not selected_row:
         st.info("상세정보를 표시할 접수 건이 없습니다.")
     else:
+        _render_section_title(4, "상세 검토 · 저장", "주소 수정, 검토 저장, 이력 확인을 한 곳에서 진행합니다.")
         _render_detail(
             row=selected_row,
             supabase=supabase,
