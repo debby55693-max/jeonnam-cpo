@@ -262,44 +262,65 @@ def _inject_page_styles():
         """
         <style>
         .cpo-step-title {
-            margin: 8px 0 10px 0;
-            padding: 4px 0 10px 0;
-            border-bottom: 2px solid #E5E7EB;
+            margin: 20px 0 12px 0;
+            padding: 0 0 12px 0;
+            border-bottom: 3px solid #D7E3F4;
         }
         .cpo-step-badge {
             display: inline-block;
-            min-width: 30px;
-            height: 30px;
-            line-height: 30px;
+            min-width: 34px;
+            height: 34px;
+            line-height: 34px;
             text-align: center;
             border-radius: 999px;
-            background: #EAF3FF;
-            color: #1D4ED8;
-            font-weight: 700;
+            background: #E8F1FF;
+            color: #1E40AF;
+            font-weight: 800;
             margin-right: 10px;
-            font-size: 15px;
+            font-size: 16px;
+            vertical-align: middle;
         }
         .cpo-step-text {
             display: inline-block;
-            font-size: 24px;
+            font-size: 26px;
             font-weight: 800;
             color: #0F172A;
+            letter-spacing: -0.2px;
             vertical-align: middle;
         }
         .cpo-step-help {
-            margin-top: 6px;
-            margin-left: 42px;
+            margin-top: 7px;
+            margin-left: 46px;
             color: #475569;
             font-size: 13px;
+            line-height: 1.5;
         }
         .cpo-inline-guide {
-            padding: 2px 0 8px 0;
+            padding: 0 0 10px 0;
             color: #475569;
             font-size: 13px;
+            line-height: 1.6;
         }
         .cpo-inline-guide a {
             color: #1D4ED8;
             text-decoration: none;
+            font-weight: 700;
+        }
+        .cpo-page-note {
+            margin: 2px 0 6px 0;
+            color: #334155;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .cpo-subtle-note {
+            margin: 4px 0 10px 0;
+            color: #64748B;
+            font-size: 12px;
+        }
+        .cpo-list-toolbar-label {
+            margin-top: 10px;
+            color: #334155;
+            font-size: 13px;
             font-weight: 600;
         }
         </style>
@@ -1603,7 +1624,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         if admin_station_default not in admin_station_options:
             admin_station_default = "전체"
 
-        st.caption(f"현재 선택 경찰서: {admin_station_default}")
+        st.markdown(f'<div class="cpo-page-note">현재 선택 경찰서: {admin_station_default}</div>', unsafe_allow_html=True)
 
         f0, f1, f2, f3, f4 = st.columns([2, 2, 2, 2, 3])
         with f0:
@@ -1622,7 +1643,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         with f4:
             keyword = st.text_input("점포명 / 신청인 / 주소 검색", key="keyword")
     else:
-        st.caption(f"관할 경찰서: {selected_station}")
+        st.markdown(f'<div class="cpo-page-note">관할 경찰서: {selected_station}</div>', unsafe_allow_html=True)
 
         f1, f2, f3, f4 = st.columns([2, 2, 2, 3])
         with f1:
@@ -1634,7 +1655,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         with f4:
             keyword = st.text_input("점포명 / 신청인 / 주소 검색", key="keyword")
 
-    _render_section_heading("1", "접수 조회", "경찰서·상태·기간·검색어를 먼저 정한 뒤 아래 목록을 확인합니다.")
+    _render_section_heading("1", "접수 조회", "경찰서·상태·기간·검색어를 먼저 정한 뒤 아래 목록과 지도 대상을 확인합니다.")
 
     filtered_rows = _apply_filters(
         rows=raw_rows,
@@ -1648,7 +1669,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
 
     _render_top_metrics(filtered_rows)
 
-    _render_section_heading("2", "우선 검토 대상 확인", "점수가 높은 점포를 먼저 보고, 제외업종 여부도 바로 확인합니다.")
+    _render_section_heading("2", "우선 검토 대상 확인", "점수가 높은 점포를 먼저 살펴보고 제외업종 여부를 함께 확인합니다.")
     _render_score_guide()
     _render_semas_reference_box()
     _render_priority_table(filtered_rows)
@@ -1675,25 +1696,25 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         row_count=len(filtered_rows),
     )
 
-    _render_section_heading("3", "접수 목록 선택", f"현재 체크 {len(checked_export_rows)}건 / 조회 결과 {len(filtered_rows)}건")
+    _render_section_heading("3", "접수 목록 선택 · 다운로드", f"선택 {len(checked_export_rows)}건 / 조회 결과 {len(filtered_rows)}건")
 
     list_title_col, list_select_all_col, list_clear_col, list_btn1_col, list_btn2_col = st.columns([4, 1, 1, 1, 1])
     with list_title_col:
-        st.markdown("### 접수 목록 현황")
+        st.markdown('<div class="cpo-page-note">조회된 접수를 선택하고 바로 다운로드할 수 있습니다.</div>', unsafe_allow_html=True)
     with list_select_all_col:
         st.write("")
-        if st.button("조회결과 전체 체크", use_container_width=True, key="bulk_check_visible_rows"):
+        if st.button("조회 결과 전체 선택", use_container_width=True, key="bulk_check_visible_rows"):
             _bulk_check_rows(filtered_rows)
             st.rerun()
     with list_clear_col:
         st.write("")
-        if st.button("현재 체크 해제", use_container_width=True, key="bulk_clear_visible_rows"):
+        if st.button("선택 해제", use_container_width=True, key="bulk_clear_visible_rows"):
             _clear_checked_rows(filtered_rows)
             st.rerun()
     with list_btn1_col:
         st.write("")
         st.download_button(
-            "체크한 건 다운로드",
+            "선택 항목 다운로드",
             data=_df_to_excel_bytes(checked_export_df) if not checked_export_df.empty else b"",
             file_name=checked_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1704,7 +1725,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     with list_btn2_col:
         st.write("")
         st.download_button(
-            "조회 결과 전체 다운로드",
+            "전체 결과 다운로드",
             data=_df_to_excel_bytes(all_export_df) if not all_export_df.empty else b"",
             file_name=all_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1715,8 +1736,9 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
 
     _render_list_table(filtered_rows)
 
-    _render_section_heading("4", "지도 확인 · 상세 검토", "목록에서 선택한 점포의 위치를 확인하고 아래에서 검토를 저장합니다.")
-    st.markdown("### 접수 현황 지도")
+    _render_section_heading("4", "지도 확인 · 상세 검토 저장", "목록에서 선택한 점포의 위치를 확인하고 아래에서 검토 내용을 저장합니다.")
+    st.markdown("### 선택 접수 지도")
+    st.markdown('<div class="cpo-subtle-note">목록에서 체크한 항목이 아니라 현재 선택된 1건을 중심으로 지도와 상세정보가 바뀝니다.</div>', unsafe_allow_html=True)
     selected_row = _selected_row(filtered_rows)
 
     if filtered_rows:
@@ -1725,7 +1747,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
 
         n1, n2, n3 = st.columns([1, 1, 3])
         with n1:
-            if st.button("이전 점포", use_container_width=True):
+            if st.button("이전 신청", use_container_width=True):
                 ids = [row.get("application_id") for row in filtered_rows]
                 current_id = st.session_state.get("selected_application_id")
                 if current_id not in ids:
@@ -1737,7 +1759,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
                 st.session_state["selected_application_selectbox"] = st.session_state.get("selected_application_id")
                 st.rerun()
         with n2:
-            if st.button("다음 점포", use_container_width=True):
+            if st.button("다음 신청", use_container_width=True):
                 ids = [row.get("application_id") for row in filtered_rows]
                 current_id = st.session_state.get("selected_application_id")
                 if current_id not in ids:
@@ -1749,7 +1771,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
                 st.session_state["selected_application_selectbox"] = st.session_state.get("selected_application_id")
                 st.rerun()
         with n3:
-            st.caption("접수 목록이나 선택 점포를 바꾸면 지도와 아래 상세정보가 함께 바뀝니다.")
+            st.markdown('<div class="cpo-subtle-note">접수 목록에서 선택을 바꾸면 지도와 아래 상세정보가 함께 바뀝니다.</div>', unsafe_allow_html=True)
 
         _render_map(filtered_rows, selected_row)
 
