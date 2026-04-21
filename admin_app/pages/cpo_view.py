@@ -1664,8 +1664,6 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     today = date.today()
     default_from = today - timedelta(days=30)
 
-    _render_section_title(1, "접수 조회", "경찰서·상태·기간 조건으로 접수건을 빠르게 찾습니다.")
-
     if role == "admin":
         admin_station_options = ["전체"] + station_label_options
         admin_station_default = st.session_state.get("admin_station_filter") or "전체"
