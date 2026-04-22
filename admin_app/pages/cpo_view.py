@@ -720,6 +720,72 @@ def _df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     return output.getvalue()
 
 
+def _excel_safe_sheet_name(value: Any, fallback: str = "sheet") -> str:
+    text = _safe_str(value) or fallback
+    text = re.sub(r"[\/\*\?:\[\]]", "_", text)
+    text = text.strip("'")
+    text = text[:31].strip()
+    return text or fallback
+
+
+def _dfs_to_excel_bytes(sheet_map: Dict[str, pd.DataFrame]) -> bytes:
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        used_names = set()
+        for raw_name, df in sheet_map.items():
+            base_name = _excel_safe_sheet_name(raw_name)
+            sheet_name = base_name
+            suffix = 1
+            while sheet_name in used_names:
+                suffix_text = f"_{suffix}"
+                sheet_name = f"{base_name[:31-len(suffix_text)]}{suffix_text}"
+                suffix += 1
+            used_names.add(sheet_name)
+            target_df = df if df is not None else pd.DataFrame()
+            target_df.to_excel(writer, sheet_name=sheet_name, index=False)
+    return output.getvalue()
+
+
+def _build_station_summary_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
+    status_columns = ["접수완료", "검토중", "추가서류요청", "검토완료", "제외", "선정"]
+    station_groups: Dict[str, List[Dict[str, Any]]] = {}
+
+    for row in rows:
+        station_label = _safe_str(row.get("station_label")) or "미지정"
+        station_groups.setdefault(station_label, []).append(row)
+
+    summary_rows = []
+    for station_label in sorted(station_groups.keys()):
+        station_rows = station_groups[station_label]
+        item = {"관할경찰서": station_label, "전체건수": len(station_rows)}
+        for status_label in status_columns:
+            item[status_label] = 0
+        for row in station_rows:
+            label = _status_label(row.get("current_status"))
+            if label in item:
+                item[label] += 1
+        summary_rows.append(item)
+
+    if not summary_rows:
+        return pd.DataFrame(columns=["관할경찰서", "전체건수", *status_columns])
+    return pd.DataFrame(summary_rows)
+
+
+def _build_station_export_workbook_bytes(rows: List[Dict[str, Any]]) -> bytes:
+    sheet_map: Dict[str, pd.DataFrame] = {}
+    sheet_map["관서별요약"] = _build_station_summary_df(rows)
+
+    station_groups: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        station_label = _safe_str(row.get("station_label")) or "미지정"
+        station_groups.setdefault(station_label, []).append(row)
+
+    for station_label in sorted(station_groups.keys()):
+        sheet_map[station_label] = _build_export_df(station_groups[station_label])
+
+    return _dfs_to_excel_bytes(sheet_map)
+
+
 def _sanitize_filename_text(value: Any, fallback: str = "all") -> str:
     text = _safe_str(value)
     if not text or text == "전체":
@@ -741,6 +807,19 @@ def _build_download_filename(
     status_part = _sanitize_filename_text(status_filter, fallback="all_status")
     date_part = f"{date_from.strftime('%Y%m%d')}_{date_to.strftime('%Y%m%d')}"
     return f"applications_{kind}_{station_part}_{status_part}_{date_part}_{row_count}건.xlsx"
+
+
+def _build_station_workbook_filename(
+    selected_station: str,
+    status_filter: str,
+    date_from: date,
+    date_to: date,
+    row_count: int,
+) -> str:
+    station_part = _sanitize_filename_text(selected_station, fallback="all_station")
+    status_part = _sanitize_filename_text(status_filter, fallback="all_status")
+    date_part = f"{date_from.strftime('%Y%m%d')}_{date_to.strftime('%Y%m%d')}"
+    return f"applications_by_station_{station_part}_{status_part}_{date_part}_{row_count}건.xlsx"
 
 
 def _bump_table_editor_nonce():
@@ -1020,17 +1099,6 @@ def _render_page_ui_css():
         div[data-testid="stButton"] > button,
         div[data-testid="stDownloadButton"] > button {
             min-height: 42px;
-            font-weight: 700;
-            white-space: nowrap;
-            letter-spacing: -0.01em;
-            border-radius: 12px;
-        }
-        .cpo-toolbar-note {
-            display: flex;
-            align-items: center;
-            min-height: 42px;
-            color: #475569;
-            font-size: 0.96rem;
             font-weight: 600;
         }
         div[data-testid="stTextInput"] label,
@@ -1830,6 +1898,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     checked_export_rows = [row for row in filtered_rows if row.get("application_id") in checked_ids_for_download]
     checked_export_df = _build_export_df(checked_export_rows) if checked_export_rows else pd.DataFrame()
     all_export_df = _build_export_df(filtered_rows) if filtered_rows else pd.DataFrame()
+    station_workbook_bytes = _build_station_export_workbook_bytes(filtered_rows) if role == "admin" and filtered_rows else b""
 
     checked_filename = _build_download_filename(
         kind="checked",
@@ -1847,21 +1916,39 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         date_to=date_to,
         row_count=len(filtered_rows),
     )
+    station_workbook_filename = _build_station_workbook_filename(
+        selected_station=selected_station if role != "admin" else st.session_state.get("admin_station_filter", "전체"),
+        status_filter=status_filter,
+        date_from=date_from,
+        date_to=date_to,
+        row_count=len(filtered_rows),
+    )
 
     _render_section_heading("3", "접수 목록 선택 · 다운로드", f"선택 {len(checked_export_rows)}건 / 조회 결과 {len(filtered_rows)}건")
 
-    list_title_col, list_select_all_col, list_clear_col, list_btn1_col, list_btn2_col = st.columns([3.6, 1.1, 1.1, 1.25, 1.25])
+    if role == "admin":
+        list_title_col, list_select_all_col, list_clear_col, list_btn1_col, list_btn2_col, list_btn3_col = st.columns([3.6, 1, 1, 1.2, 1.2, 1.5])
+    else:
+        list_title_col, list_select_all_col, list_clear_col, list_btn1_col, list_btn2_col = st.columns([4, 1, 1, 1.2, 1.2])
+        list_btn3_col = None
+
     with list_title_col:
-        st.markdown('<div class="cpo-toolbar-note">조회된 접수를 선택하고 바로 다운로드할 수 있습니다.</div>', unsafe_allow_html=True)
+        note = "조회된 접수를 선택하고 바로 다운로드할 수 있습니다."
+        if role == "admin":
+            note += " 관서별 다운로드는 현재 조회 조건 기준으로 관서별 시트가 따로 만들어집니다."
+        st.markdown(f'<div class="cpo-page-note">{note}</div>', unsafe_allow_html=True)
     with list_select_all_col:
+        st.write("")
         if st.button("전체 선택", use_container_width=True, key="bulk_check_visible_rows"):
             _bulk_check_rows(filtered_rows)
             st.rerun()
     with list_clear_col:
+        st.write("")
         if st.button("선택 해제", use_container_width=True, key="bulk_clear_visible_rows"):
             _clear_checked_rows(filtered_rows)
             st.rerun()
     with list_btn1_col:
+        st.write("")
         st.download_button(
             "선택 다운로드",
             data=_df_to_excel_bytes(checked_export_df) if not checked_export_df.empty else b"",
@@ -1872,6 +1959,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
             disabled=checked_export_df.empty,
         )
     with list_btn2_col:
+        st.write("")
         st.download_button(
             "전체 다운로드",
             data=_df_to_excel_bytes(all_export_df) if not all_export_df.empty else b"",
@@ -1881,6 +1969,18 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
             key="download_all_applications_top",
             disabled=all_export_df.empty,
         )
+    if role == "admin" and list_btn3_col is not None:
+        with list_btn3_col:
+            st.write("")
+            st.download_button(
+                "관서별 다운로드",
+                data=station_workbook_bytes,
+                file_name=station_workbook_filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key="download_station_applications_top",
+                disabled=not bool(station_workbook_bytes),
+            )
 
     _render_list_table(filtered_rows)
 
