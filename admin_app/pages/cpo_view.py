@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from io import BytesIO
+from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -78,7 +79,123 @@ JEONNAM_STATION_AREAS = [
     ("신안", "신안경찰서"),
 ]
 
+SDSC_EXPORT_COLUMNS = [
+    "시도",
+    "시군",
+    "행정동",
+    "법정동",
+    "상호명",
+    "지점명",
+    "업종대분류",
+    "업종중분류",
+    "업종소분류",
+    "표준산업분류",
+    "도로명주소",
+    "지번주소",
+    "신우편번호",
+    "경도",
+    "위도",
+]
+
 _COORD_TRANSFORMER = Transformer.from_crs("EPSG:5179", "EPSG:4326", always_xy=True)
+
+
+def _station_area_name(station_label: str) -> str:
+    station_label = _safe_str(station_label)
+    for area_name, label in JEONNAM_STATION_AREAS:
+        if label == station_label:
+            return area_name
+    return station_label.replace("경찰서", "")
+
+
+def _find_sdsc_csv_path() -> Optional[Path]:
+    root = Path(__file__).resolve().parents[2]
+    candidates = [
+        root / "jeonnam_stores.csv",
+        root / "data" / "jeonnam_stores.csv",
+        root / "output" / "jeonnam_stores.csv",
+        root / "admin_app" / "data" / "jeonnam_stores.csv",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+@st.cache_data(show_spinner=False)
+def _load_sdsc_stores_from_csv(csv_path: str) -> pd.DataFrame:
+    df = pd.read_csv(csv_path, low_memory=False)
+    for col in ["ctprvnNm", "signguNm", "adongNm", "ldongNm", "bizesNm", "brchNm", "rdnmAdr", "lnoAdr", "indsLclsNm", "indsMclsNm", "indsSclsNm", "ksicNm"]:
+        if col in df.columns:
+            df[col] = df[col].fillna("").astype(str).str.strip()
+    for col in ["lon", "lat"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
+
+
+def _load_sdsc_stores() -> pd.DataFrame:
+    csv_path = _find_sdsc_csv_path()
+    if not csv_path:
+        raise FileNotFoundError("jeonnam_stores.csv 파일을 찾지 못했습니다. 프로젝트 루트에 파일을 두고 다시 실행해주세요.")
+    return _load_sdsc_stores_from_csv(str(csv_path))
+
+
+def _filter_sdsc_stores_by_station(df: pd.DataFrame, station_label: str) -> pd.DataFrame:
+    area_name = _station_area_name(station_label)
+    if not area_name:
+        return df.iloc[0:0].copy()
+
+    signgu_series = df.get("signguNm", pd.Series(dtype=str)).fillna("").astype(str).str.strip()
+    mask = signgu_series.eq(area_name) | signgu_series.eq(f"{area_name}시") | signgu_series.eq(f"{area_name}군")
+
+    if not bool(mask.any()):
+        address_series = (
+            df.get("rdnmAdr", pd.Series(dtype=str)).fillna("").astype(str)
+            + " "
+            + df.get("lnoAdr", pd.Series(dtype=str)).fillna("").astype(str)
+        )
+        mask = address_series.str.contains(area_name, na=False)
+
+    filtered = df.loc[mask].copy()
+    if "bizesNm" in filtered.columns:
+        filtered = filtered.sort_values(by=["bizesNm", "rdnmAdr"], na_position="last")
+    return filtered.reset_index(drop=True)
+
+
+def _build_sdsc_export_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=SDSC_EXPORT_COLUMNS)
+
+    export_df = pd.DataFrame(
+        {
+            "시도": df.get("ctprvnNm", ""),
+            "시군": df.get("signguNm", ""),
+            "행정동": df.get("adongNm", ""),
+            "법정동": df.get("ldongNm", ""),
+            "상호명": df.get("bizesNm", ""),
+            "지점명": df.get("brchNm", ""),
+            "업종대분류": df.get("indsLclsNm", ""),
+            "업종중분류": df.get("indsMclsNm", ""),
+            "업종소분류": df.get("indsSclsNm", ""),
+            "표준산업분류": df.get("ksicNm", ""),
+            "도로명주소": df.get("rdnmAdr", ""),
+            "지번주소": df.get("lnoAdr", ""),
+            "신우편번호": df.get("newZipcd", ""),
+            "경도": df.get("lon", ""),
+            "위도": df.get("lat", ""),
+        }
+    )
+    if "경도" in export_df.columns:
+        export_df["경도"] = pd.to_numeric(export_df["경도"], errors="coerce").round(6)
+    if "위도" in export_df.columns:
+        export_df["위도"] = pd.to_numeric(export_df["위도"], errors="coerce").round(6)
+    return export_df.fillna("")
+
+
+def _build_sdsc_download_filename(station_label: str, row_count: int) -> str:
+    station_part = _sanitize_filename_text(_station_area_name(station_label), fallback="station")
+    return f"sdsc_{station_part}_소상공인현황_{row_count}건.xlsx"
 
 
 def _safe_str(v: Any) -> str:
@@ -713,77 +830,27 @@ def _summary_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
     return counts
 
 
+def _status_chip_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
+    counts = {
+        "접수완료": 0,
+        "검토중": 0,
+        "추가서류요청": 0,
+        "검토완료": 0,
+        "제외": 0,
+        "선정": 0,
+    }
+    for row in rows:
+        label = _status_label(row.get("current_status"))
+        if label in counts:
+            counts[label] += 1
+    return counts
+
+
 def _df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name="data", index=False)
     return output.getvalue()
-
-
-def _excel_safe_sheet_name(value: Any, fallback: str = "sheet") -> str:
-    text = _safe_str(value) or fallback
-    text = re.sub(r"[\/\*\?:\[\]]", "_", text)
-    text = text.strip("'")
-    text = text[:31].strip()
-    return text or fallback
-
-
-def _dfs_to_excel_bytes(sheet_map: Dict[str, pd.DataFrame]) -> bytes:
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        used_names = set()
-        for raw_name, df in sheet_map.items():
-            base_name = _excel_safe_sheet_name(raw_name)
-            sheet_name = base_name
-            suffix = 1
-            while sheet_name in used_names:
-                suffix_text = f"_{suffix}"
-                sheet_name = f"{base_name[:31-len(suffix_text)]}{suffix_text}"
-                suffix += 1
-            used_names.add(sheet_name)
-            target_df = df if df is not None else pd.DataFrame()
-            target_df.to_excel(writer, sheet_name=sheet_name, index=False)
-    return output.getvalue()
-
-
-def _build_station_summary_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
-    status_columns = ["접수완료", "검토중", "추가서류요청", "검토완료", "제외", "선정"]
-    station_groups: Dict[str, List[Dict[str, Any]]] = {}
-
-    for row in rows:
-        station_label = _safe_str(row.get("station_label")) or "미지정"
-        station_groups.setdefault(station_label, []).append(row)
-
-    summary_rows = []
-    for station_label in sorted(station_groups.keys()):
-        station_rows = station_groups[station_label]
-        item = {"관할경찰서": station_label, "전체건수": len(station_rows)}
-        for status_label in status_columns:
-            item[status_label] = 0
-        for row in station_rows:
-            label = _status_label(row.get("current_status"))
-            if label in item:
-                item[label] += 1
-        summary_rows.append(item)
-
-    if not summary_rows:
-        return pd.DataFrame(columns=["관할경찰서", "전체건수", *status_columns])
-    return pd.DataFrame(summary_rows)
-
-
-def _build_station_export_workbook_bytes(rows: List[Dict[str, Any]]) -> bytes:
-    sheet_map: Dict[str, pd.DataFrame] = {}
-    sheet_map["관서별요약"] = _build_station_summary_df(rows)
-
-    station_groups: Dict[str, List[Dict[str, Any]]] = {}
-    for row in rows:
-        station_label = _safe_str(row.get("station_label")) or "미지정"
-        station_groups.setdefault(station_label, []).append(row)
-
-    for station_label in sorted(station_groups.keys()):
-        sheet_map[station_label] = _build_export_df(station_groups[station_label])
-
-    return _dfs_to_excel_bytes(sheet_map)
 
 
 def _sanitize_filename_text(value: Any, fallback: str = "all") -> str:
@@ -807,19 +874,6 @@ def _build_download_filename(
     status_part = _sanitize_filename_text(status_filter, fallback="all_status")
     date_part = f"{date_from.strftime('%Y%m%d')}_{date_to.strftime('%Y%m%d')}"
     return f"applications_{kind}_{station_part}_{status_part}_{date_part}_{row_count}건.xlsx"
-
-
-def _build_station_workbook_filename(
-    selected_station: str,
-    status_filter: str,
-    date_from: date,
-    date_to: date,
-    row_count: int,
-) -> str:
-    station_part = _sanitize_filename_text(selected_station, fallback="all_station")
-    status_part = _sanitize_filename_text(status_filter, fallback="all_status")
-    date_part = f"{date_from.strftime('%Y%m%d')}_{date_to.strftime('%Y%m%d')}"
-    return f"applications_by_station_{station_part}_{status_part}_{date_part}_{row_count}건.xlsx"
 
 
 def _bump_table_editor_nonce():
@@ -1063,13 +1117,14 @@ def _render_priority_table(rows: List[Dict[str, Any]]):
 
 def _render_top_metrics(rows: List[Dict[str, Any]]):
     counts = _summary_counts(rows)
+    chip_counts = _status_chip_counts(rows)
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("총 접수", f"{counts['총 접수']}건")
     c2.metric("검토완료", f"{counts['검토완료']}건")
     c3.metric("제외", f"{counts['제외']}건")
     c4.metric("선정", f"{counts['선정']}건")
     c5.metric("미검토", f"{counts['미검토']}건")
-    st.markdown(_status_summary_html(counts), unsafe_allow_html=True)
+    st.markdown(_status_summary_html(chip_counts), unsafe_allow_html=True)
 
 
 def _render_page_ui_css():
@@ -1124,7 +1179,13 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
         return []
 
     visible_ids = [row.get("application_id") for row in rows]
+    selectbox_selected_id = st.session_state.get("selected_application_selectbox")
     current_selected_id = st.session_state.get("selected_application_id")
+
+    if selectbox_selected_id in visible_ids and current_selected_id != selectbox_selected_id:
+        current_selected_id = selectbox_selected_id
+        st.session_state["selected_application_id"] = current_selected_id
+
     if current_selected_id is None or current_selected_id not in visible_ids:
         current_selected_id = rows[0].get("application_id")
         st.session_state["selected_application_id"] = current_selected_id
@@ -1206,7 +1267,7 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
         else:
             next_selected_id = checked_ids[-1]
     else:
-        next_selected_id = rows[0].get("application_id")
+        next_selected_id = current_selected_id or rows[0].get("application_id")
 
     if next_selected_id is not None:
         st.session_state["selected_application_id"] = next_selected_id
@@ -1898,7 +1959,6 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     checked_export_rows = [row for row in filtered_rows if row.get("application_id") in checked_ids_for_download]
     checked_export_df = _build_export_df(checked_export_rows) if checked_export_rows else pd.DataFrame()
     all_export_df = _build_export_df(filtered_rows) if filtered_rows else pd.DataFrame()
-    station_workbook_bytes = _build_station_export_workbook_bytes(filtered_rows) if role == "admin" and filtered_rows else b""
 
     checked_filename = _build_download_filename(
         kind="checked",
@@ -1916,30 +1976,37 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         date_to=date_to,
         row_count=len(filtered_rows),
     )
-    station_workbook_filename = _build_station_workbook_filename(
-        selected_station=selected_station if role != "admin" else st.session_state.get("admin_station_filter", "전체"),
-        status_filter=status_filter,
-        date_from=date_from,
-        date_to=date_to,
-        row_count=len(filtered_rows),
-    )
+
+    sdsc_target_station = selected_station if role != "admin" else _safe_str(st.session_state.get("admin_station_filter", ""))
+    if sdsc_target_station == "전체":
+        sdsc_target_station = ""
+
+    sdsc_export_df = pd.DataFrame()
+    sdsc_download_bytes = b""
+    sdsc_download_filename = ""
+    sdsc_download_error = ""
+    sdsc_row_count = 0
+
+    if sdsc_target_station:
+        try:
+            sdsc_source_df = _load_sdsc_stores()
+            sdsc_filtered_df = _filter_sdsc_stores_by_station(sdsc_source_df, sdsc_target_station)
+            sdsc_export_df = _build_sdsc_export_df(sdsc_filtered_df)
+            sdsc_row_count = len(sdsc_export_df)
+            if not sdsc_export_df.empty:
+                sdsc_download_bytes = _df_to_excel_bytes(sdsc_export_df)
+                sdsc_download_filename = _build_sdsc_download_filename(sdsc_target_station, sdsc_row_count)
+        except Exception as exc:
+            sdsc_download_error = str(exc)
 
     _render_section_heading("3", "접수 목록 선택 · 다운로드", f"선택 {len(checked_export_rows)}건 / 조회 결과 {len(filtered_rows)}건")
 
-    if role == "admin":
-        list_title_col, list_select_all_col, list_clear_col, list_btn1_col, list_btn2_col, list_btn3_col = st.columns([3.6, 1, 1, 1.2, 1.2, 1.5])
-    else:
-        list_title_col, list_select_all_col, list_clear_col, list_btn1_col, list_btn2_col = st.columns([4, 1, 1, 1.2, 1.2])
-        list_btn3_col = None
-
+    list_title_col, list_select_all_col, list_clear_col, list_btn1_col, list_btn2_col = st.columns([4, 1, 1, 1, 1])
     with list_title_col:
-        note = "조회된 접수를 선택하고 바로 다운로드할 수 있습니다."
-        if role == "admin":
-            note += " 관서별 다운로드는 현재 조회 조건 기준으로 관서별 시트가 따로 만들어집니다."
-        st.markdown(f'<div class="cpo-page-note">{note}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="cpo-page-note">조회된 접수를 선택하고 바로 다운로드할 수 있습니다.</div>', unsafe_allow_html=True)
     with list_select_all_col:
         st.write("")
-        if st.button("전체 선택", use_container_width=True, key="bulk_check_visible_rows"):
+        if st.button("조회 결과 전체 선택", use_container_width=True, key="bulk_check_visible_rows"):
             _bulk_check_rows(filtered_rows)
             st.rerun()
     with list_clear_col:
@@ -1950,7 +2017,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     with list_btn1_col:
         st.write("")
         st.download_button(
-            "선택 다운로드",
+            "선택 항목 다운로드",
             data=_df_to_excel_bytes(checked_export_df) if not checked_export_df.empty else b"",
             file_name=checked_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1961,7 +2028,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     with list_btn2_col:
         st.write("")
         st.download_button(
-            "전체 다운로드",
+            "전체 결과 다운로드",
             data=_df_to_excel_bytes(all_export_df) if not all_export_df.empty else b"",
             file_name=all_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1969,18 +2036,29 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
             key="download_all_applications_top",
             disabled=all_export_df.empty,
         )
-    if role == "admin" and list_btn3_col is not None:
-        with list_btn3_col:
-            st.write("")
-            st.download_button(
-                "관서별 다운로드",
-                data=station_workbook_bytes,
-                file_name=station_workbook_filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                key="download_station_applications_top",
-                disabled=not bool(station_workbook_bytes),
+
+    sdsc_note_col, sdsc_btn_col = st.columns([4, 2])
+    with sdsc_note_col:
+        if sdsc_download_error:
+            st.markdown(f'<div class="cpo-subtle-note">소상공인 전체 현황 다운로드 준비 실패: {_safe_str(sdsc_download_error)}</div>', unsafe_allow_html=True)
+        elif sdsc_target_station:
+            st.markdown(
+                f'<div class="cpo-page-note">{_station_area_name(sdsc_target_station)} 시군 소상공인 전체 현황 {sdsc_row_count:,}건을 내려받을 수 있습니다.</div>',
+                unsafe_allow_html=True,
             )
+        else:
+            st.markdown('<div class="cpo-subtle-note">관리자는 관서를 하나 선택하면 해당 시군 소상공인 전체 현황을 내려받을 수 있습니다.</div>', unsafe_allow_html=True)
+    with sdsc_btn_col:
+        st.write("")
+        st.download_button(
+            "해당 관서 소상공인 현황 다운로드",
+            data=sdsc_download_bytes,
+            file_name=sdsc_download_filename or "sdsc_station_export.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="download_sdsc_station_top",
+            disabled=(not sdsc_target_station) or bool(sdsc_download_error) or sdsc_export_df.empty,
+        )
 
     _render_list_table(filtered_rows)
 
