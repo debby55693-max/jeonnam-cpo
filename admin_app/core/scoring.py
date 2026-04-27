@@ -8,8 +8,8 @@
      - 탄력순찰 수        10점  적을수록 위험
   ② CPO 현장 환경조사    20점  절대평가, 23점 원점수 → 20점 환산
   ③ 신청인 설문          30점
-     - 점포환경 7항목     20점
-     - 체감안전도 5문항   10점
+     - 점포환경 7항목     25점
+     - 체감안전도 5문항    5점
   ④ CPO 재량점수          10점
 """
 
@@ -126,21 +126,26 @@ def compute_precas_scores_batch(all_rows: List[Dict[str, Any]]) -> Dict[Any, Dic
 
 FIELD_SCORING: Dict[str, Dict[str, Any]] = {
     "field_neighborhood_type": {
-        "label": "주변 환경 유형",
+        "label": "점포 주변 환경 유형",
         "max": 3,
         "scores": {
-            "유흥가·번화가": 3,
-            "상업지구 혼재": 2,
-            "주택가·일반": 1,
+            "유흥·오락 밀집 (노래방·바·유흥주점 밀집)": 3,
+            "유흥·숙박 혼재 (모텔·PC방 인접)": 3,
+            "전통시장·번화가 (시장·상점가)": 2,
+            "일반 상업지구 (카페·음식점 혼재)": 1,
+            "주택가·아파트단지 내 상가": 0,
+            "농촌·외곽·한적한 지역": 0,
         },
     },
     "field_location_type": {
-        "label": "위치 유형",
+        "label": "점포 위치 유형",
         "max": 3,
         "scores": {
-            "골목 안쪽": 3,
-            "이면도로": 2,
-            "대로변": 0,
+            "지하층·반지하 점포": 3,
+            "골목 안쪽 (대로에서 보이지 않는 위치)": 3,
+            "이면도로·골목 점포": 2,
+            "1층 이면도로변": 1,
+            "1층 대로변 (정면 가시성 양호)": 0,
         },
     },
     "field_lighting": {
@@ -201,8 +206,23 @@ FIELD_SCORING: Dict[str, Dict[str, Any]] = {
 
 
 FIELD_OPTIONS: Dict[str, List[str]] = {
-    "field_neighborhood_type": ["미입력", "유흥가·번화가", "상업지구 혼재", "주택가·일반"],
-    "field_location_type": ["미입력", "골목 안쪽", "이면도로", "대로변"],
+    "field_neighborhood_type": [
+        "미입력",
+        "유흥·오락 밀집 (노래방·바·유흥주점 밀집)",
+        "유흥·숙박 혼재 (모텔·PC방 인접)",
+        "전통시장·번화가 (시장·상점가)",
+        "일반 상업지구 (카페·음식점 혼재)",
+        "주택가·아파트단지 내 상가",
+        "농촌·외곽·한적한 지역",
+    ],
+    "field_location_type": [
+        "미입력",
+        "지하층·반지하 점포",
+        "골목 안쪽 (대로에서 보이지 않는 위치)",
+        "이면도로·골목 점포",
+        "1층 이면도로변",
+        "1층 대로변 (정면 가시성 양호)",
+    ],
     "field_lighting": ["미입력", "불량(어두움)", "보통", "양호"],
     "field_police_distance": ["미입력", "10분 이상", "5~10분", "3분 이내"],
     "field_vulnerable_facilities": ["미입력", "유흥업소·숙박업소 인접", "일부 있음", "없음"],
@@ -247,34 +267,41 @@ def field_survey_detail(row: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 _CRIME_SC = {
-    "자주 있음": 4,
-    "가끔 있음": 2,
+    "자주 있음": 5,
+    "가끔 있음": 3,
     "거의 없음": 1,
     "전혀 없음": 0,
 }
 
 _NIGHT_SC = {
-    "자주 있음": 3,
-    "가끔 있음": 1,
+    "자주 있음": 4,
+    "가끔 있음": 2,
     "전혀 없음": 0,
 }
 
 _DARK_SC = {
-    "그렇다": 3,
-    "보통": 1,
+    "그렇다": 4,
+    "보통": 2,
     "전혀 아님": 0,
 }
 
 _SOLO_SC = {
-    "자주 있음": 3,
-    "가끔 있음": 1,
+    "자주 있음": 4,
+    "가끔 있음": 2,
     "전혀 없음": 0,
 }
 
 
 def compute_survey_environment_score(row: Dict[str, Any]) -> int:
     """
-    신청인 점포환경 설문 7항목: 최대 20점
+    신청인 점포환경 설문 7항목: 최대 25점
+      - 범죄피해 불안감:  5점
+      - 야간 영업 빈도:   4점
+      - 주변 어두움:      4점
+      - 혼자 근무 빈도:   4점
+      - CCTV 없음:        4점
+      - 경비업체 없음:    2점
+      - 비상벨 없음:      2점
     """
     score = 0
 
@@ -284,7 +311,7 @@ def compute_survey_environment_score(row: Dict[str, Any]) -> int:
     score += _SOLO_SC.get(_safe_str(row.get("survey_single_worker")), 0)
 
     if not bool(row.get("has_cctv")):
-        score += 3
+        score += 4
 
     if not bool(row.get("uses_security_company")):
         score += 2
@@ -292,12 +319,12 @@ def compute_survey_environment_score(row: Dict[str, Any]) -> int:
     if not bool(row.get("has_emergency_bell")):
         score += 2
 
-    return max(0, min(20, score))
+    return max(0, min(25, score))
 
 
 def _safe_feel_answer_score(answer: Any, reverse: bool = False) -> float:
     """
-    체감안전도 5문항 개별 점수.
+    체감안전도 5문항 개별 점수. 문항당 최대 1.0점 (5문항 합계 최대 5점).
     reverse=True: '안전하다' 계열 문항이므로 부정응답일수록 고점.
     reverse=False: '불안하다/피해가능성' 계열 문항이므로 긍정응답일수록 고점.
     """
@@ -306,24 +333,24 @@ def _safe_feel_answer_score(answer: Any, reverse: bool = False) -> float:
     if reverse:
         return {
             "매우 그렇다": 0.0,
-            "그렇다": 0.5,
-            "보통이다": 1.0,
-            "그렇지 않다": 1.5,
-            "매우 그렇지 않다": 2.0,
+            "그렇다": 0.25,
+            "보통이다": 0.5,
+            "그렇지 않다": 0.75,
+            "매우 그렇지 않다": 1.0,
         }.get(text, 0.0)
 
     return {
         "매우 그렇지 않다": 0.0,
-        "그렇지 않다": 0.5,
-        "보통이다": 1.0,
-        "그렇다": 1.5,
-        "매우 그렇다": 2.0,
+        "그렇지 않다": 0.25,
+        "보통이다": 0.5,
+        "그렇다": 0.75,
+        "매우 그렇다": 1.0,
     }.get(text, 0.0)
 
 
 def compute_felt_safety_score(row: Dict[str, Any]) -> float:
     """
-    체감안전도 5문항: 최대 10점.
+    체감안전도 5문항: 최대 5점.
     5문항 컬럼이 있으면 그것을 우선 사용.
     없으면 기존 felt_safety_score 값을 fallback으로 사용.
     """
@@ -339,14 +366,15 @@ def compute_felt_safety_score(row: Dict[str, Any]) -> float:
         score += _safe_feel_answer_score(row.get("safe_feel_3"), reverse=False)
         score += _safe_feel_answer_score(row.get("safe_feel_4"), reverse=True)
         score += _safe_feel_answer_score(row.get("safe_feel_5"), reverse=False)
-        return round(max(0.0, min(10.0, score)), 1)
+        return round(max(0.0, min(5.0, score)), 1)
 
     raw = _safe_float(row.get("felt_safety_score"), 0.0)
 
-    if raw > 10:
-        return round(max(0.0, min(10.0, raw / 4.0)), 1)
+    # 구버전 10점 척도 → 5점으로 환산
+    if raw > 5:
+        return round(max(0.0, min(5.0, raw / 2.0)), 1)
 
-    return round(max(0.0, min(10.0, raw)), 1)
+    return round(max(0.0, min(5.0, raw)), 1)
 
 
 def compute_survey_total(row: Dict[str, Any]) -> float:

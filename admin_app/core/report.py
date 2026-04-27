@@ -285,9 +285,9 @@ def generate_report(row: Dict, precas_scores: Dict, rank: Optional[int] = None, 
         ("점포내 CCTV",    cctv_val),
         ("사설경비 이용",  sec_val),
         ("비상벨 설치",    bell_val),
-        ("체감안전도 점수", f"{bd['felt_safety']}점/10점"),
+        ("체감안전도 점수", f"{bd['felt_safety']}점/5점"),
     ]
-    env_rows.insert(0, ("환경설문 소계", f"{bd['survey_env']}점/20점"))
+    env_rows.insert(0, ("환경설문 소계", f"{bd['survey_env']}점/25점"))
     _add_kv_table(doc, env_rows)
 
     # ── 5. CPO 재량점수 ──────────────────────────
