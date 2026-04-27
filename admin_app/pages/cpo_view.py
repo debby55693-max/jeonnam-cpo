@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from io import BytesIO
-from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -11,12 +10,28 @@ import requests
 import streamlit as st
 from pyproj import Transformer
 
+try:
+    from core.scoring import (
+        FIELD_OPTIONS,
+        compute_precas_scores_batch,
+        compute_total_score,
+        score_breakdown,
+    )
+except Exception:
+    from admin_app.core.scoring import (
+        FIELD_OPTIONS,
+        compute_precas_scores_batch,
+        compute_total_score,
+        score_breakdown,
+    )
+
 
 STATUS_LABELS = {
     "submitted": "접수완료",
     "under_review": "검토중",
     "docs_requested": "추가서류요청",
     "reviewed": "검토완료",
+    "selection_considered": "선정고려",
     "excluded": "제외",
     "selected": "선정",
 }
@@ -26,11 +41,12 @@ STATUS_DISPLAY_META = {
     "검토중": {"icon": "🟣", "class": "under-review"},
     "추가서류요청": {"icon": "🟠", "class": "docs-requested"},
     "검토완료": {"icon": "🔵", "class": "reviewed"},
+    "선정고려": {"icon": "🟡", "class": "reviewed"},
     "제외": {"icon": "⛔", "class": "excluded"},
     "선정": {"icon": "🟢", "class": "selected"},
 }
 
-STATUS_FILTER_OPTIONS = ["전체", "접수완료", "검토중", "추가서류요청", "검토완료", "제외", "선정"]
+STATUS_FILTER_OPTIONS = ["전체", "접수완료", "검토중", "추가서류요청", "검토완료", "선정고려", "제외", "선정"]
 STATUS_VALUE_BY_LABEL = {v: k for k, v in STATUS_LABELS.items()}
 
 CPO_RISK_OPTIONS = {
@@ -42,7 +58,7 @@ CPO_RISK_OPTIONS = {
     "매우 낮음": 0,
 }
 
-REVIEW_STATUS_OPTIONS = ["검토완료", "추가서류요청", "선정", "제외"]
+REVIEW_STATUS_OPTIONS = ["검토중", "추가서류요청", "검토완료", "선정고려", "선정", "제외"]
 JEONNAM_CENTER = [34.8679, 126.9910]
 COMMON_BUSINESS_TYPES = ["", "편의점", "음식점", "카페", "주점", "미용실", "소매점", "기타"]
 COMMON_SALES_BANDS = [
@@ -79,123 +95,7 @@ JEONNAM_STATION_AREAS = [
     ("신안", "신안경찰서"),
 ]
 
-SDSC_EXPORT_COLUMNS = [
-    "시도",
-    "시군",
-    "행정동",
-    "법정동",
-    "상호명",
-    "지점명",
-    "업종대분류",
-    "업종중분류",
-    "업종소분류",
-    "표준산업분류",
-    "도로명주소",
-    "지번주소",
-    "신우편번호",
-    "경도",
-    "위도",
-]
-
 _COORD_TRANSFORMER = Transformer.from_crs("EPSG:5179", "EPSG:4326", always_xy=True)
-
-
-def _station_area_name(station_label: str) -> str:
-    station_label = _safe_str(station_label)
-    for area_name, label in JEONNAM_STATION_AREAS:
-        if label == station_label:
-            return area_name
-    return station_label.replace("경찰서", "")
-
-
-def _find_sdsc_csv_path() -> Optional[Path]:
-    root = Path(__file__).resolve().parents[2]
-    candidates = [
-        root / "jeonnam_stores.csv",
-        root / "data" / "jeonnam_stores.csv",
-        root / "output" / "jeonnam_stores.csv",
-        root / "admin_app" / "data" / "jeonnam_stores.csv",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
-
-
-@st.cache_data(show_spinner=False)
-def _load_sdsc_stores_from_csv(csv_path: str) -> pd.DataFrame:
-    df = pd.read_csv(csv_path, low_memory=False)
-    for col in ["ctprvnNm", "signguNm", "adongNm", "ldongNm", "bizesNm", "brchNm", "rdnmAdr", "lnoAdr", "indsLclsNm", "indsMclsNm", "indsSclsNm", "ksicNm"]:
-        if col in df.columns:
-            df[col] = df[col].fillna("").astype(str).str.strip()
-    for col in ["lon", "lat"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df
-
-
-def _load_sdsc_stores() -> pd.DataFrame:
-    csv_path = _find_sdsc_csv_path()
-    if not csv_path:
-        raise FileNotFoundError("jeonnam_stores.csv 파일을 찾지 못했습니다. 프로젝트 루트에 파일을 두고 다시 실행해주세요.")
-    return _load_sdsc_stores_from_csv(str(csv_path))
-
-
-def _filter_sdsc_stores_by_station(df: pd.DataFrame, station_label: str) -> pd.DataFrame:
-    area_name = _station_area_name(station_label)
-    if not area_name:
-        return df.iloc[0:0].copy()
-
-    signgu_series = df.get("signguNm", pd.Series(dtype=str)).fillna("").astype(str).str.strip()
-    mask = signgu_series.eq(area_name) | signgu_series.eq(f"{area_name}시") | signgu_series.eq(f"{area_name}군")
-
-    if not bool(mask.any()):
-        address_series = (
-            df.get("rdnmAdr", pd.Series(dtype=str)).fillna("").astype(str)
-            + " "
-            + df.get("lnoAdr", pd.Series(dtype=str)).fillna("").astype(str)
-        )
-        mask = address_series.str.contains(area_name, na=False)
-
-    filtered = df.loc[mask].copy()
-    if "bizesNm" in filtered.columns:
-        filtered = filtered.sort_values(by=["bizesNm", "rdnmAdr"], na_position="last")
-    return filtered.reset_index(drop=True)
-
-
-def _build_sdsc_export_df(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return pd.DataFrame(columns=SDSC_EXPORT_COLUMNS)
-
-    export_df = pd.DataFrame(
-        {
-            "시도": df.get("ctprvnNm", ""),
-            "시군": df.get("signguNm", ""),
-            "행정동": df.get("adongNm", ""),
-            "법정동": df.get("ldongNm", ""),
-            "상호명": df.get("bizesNm", ""),
-            "지점명": df.get("brchNm", ""),
-            "업종대분류": df.get("indsLclsNm", ""),
-            "업종중분류": df.get("indsMclsNm", ""),
-            "업종소분류": df.get("indsSclsNm", ""),
-            "표준산업분류": df.get("ksicNm", ""),
-            "도로명주소": df.get("rdnmAdr", ""),
-            "지번주소": df.get("lnoAdr", ""),
-            "신우편번호": df.get("newZipcd", ""),
-            "경도": df.get("lon", ""),
-            "위도": df.get("lat", ""),
-        }
-    )
-    if "경도" in export_df.columns:
-        export_df["경도"] = pd.to_numeric(export_df["경도"], errors="coerce").round(6)
-    if "위도" in export_df.columns:
-        export_df["위도"] = pd.to_numeric(export_df["위도"], errors="coerce").round(6)
-    return export_df.fillna("")
-
-
-def _build_sdsc_download_filename(station_label: str, row_count: int) -> str:
-    station_part = _sanitize_filename_text(_station_area_name(station_label), fallback="station")
-    return f"sdsc_{station_part}_소상공인현황_{row_count}건.xlsx"
 
 
 def _safe_str(v: Any) -> str:
@@ -299,7 +199,7 @@ def _status_badge_html(value: Any) -> str:
 
 
 def _status_summary_html(counts: Dict[str, int]) -> str:
-    ordered_labels = ["접수완료", "검토중", "추가서류요청", "검토완료", "제외", "선정"]
+    ordered_labels = ["접수완료", "검토중", "추가서류요청", "검토완료", "선정고려", "제외", "선정"]
     chips = []
     for label in ordered_labels:
         meta = STATUS_DISPLAY_META.get(label, {"class": "neutral"})
@@ -361,30 +261,37 @@ def _coord_for_export(value: Any) -> Any:
     return round(num, 6) if num else ""
 
 
-def _felt_safety_score(row: Dict[str, Any]) -> int:
-    return max(0, min(40, _safe_int(row.get("felt_safety_score"), 0)))
+def _current_precas_scores() -> Dict[Any, Dict[str, Any]]:
+    rows = st.session_state.get("current_filtered_rows_for_scoring", [])
+    return compute_precas_scores_batch(rows)
 
 
-def _cpo_risk_score(row: Dict[str, Any]) -> int:
-    risk_label = _safe_str(row.get("cpo_risk_label"))
-    if risk_label in CPO_RISK_OPTIONS:
-        return CPO_RISK_OPTIONS[risk_label]
-    return max(0, min(50, _safe_int(row.get("cpo_risk_score"), 0)))
+def _score_bd(row: Dict[str, Any]) -> Dict[str, Any]:
+    return score_breakdown(row, _current_precas_scores())
 
 
-def _security_vulnerability_score(row: Dict[str, Any]) -> int:
-    score = 0
-    if not bool(row.get("has_cctv")):
-        score += 4
-    if not bool(row.get("has_emergency_bell")):
-        score += 3
-    if not bool(row.get("uses_security_company")):
-        score += 3
-    return score
+def _felt_safety_score(row: Dict[str, Any]) -> float:
+    return float(_score_bd(row).get("felt_safety", 0.0))
 
 
-def _total_score(row: Dict[str, Any]) -> int:
-    return _felt_safety_score(row) + _cpo_risk_score(row) + _security_vulnerability_score(row)
+def _survey_environment_score(row: Dict[str, Any]) -> float:
+    return float(_score_bd(row).get("survey_env", 0.0))
+
+
+def _field_survey_score(row: Dict[str, Any]) -> float:
+    return float(_score_bd(row).get("field_total", 0.0))
+
+
+def _precas_score(row: Dict[str, Any]) -> float:
+    return float(_score_bd(row).get("precas_total", 0.0))
+
+
+def _discretionary_score(row: Dict[str, Any]) -> float:
+    return float(_score_bd(row).get("discretionary", 0.0))
+
+
+def _total_score(row: Dict[str, Any]) -> float:
+    return compute_total_score(row, _current_precas_scores())
 
 
 def _unique_station_options(station_options: List[str]) -> List[str]:
@@ -830,22 +737,6 @@ def _summary_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
     return counts
 
 
-def _status_chip_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
-    counts = {
-        "접수완료": 0,
-        "검토중": 0,
-        "추가서류요청": 0,
-        "검토완료": 0,
-        "제외": 0,
-        "선정": 0,
-    }
-    for row in rows:
-        label = _status_label(row.get("current_status"))
-        if label in counts:
-            counts[label] += 1
-    return counts
-
-
 def _df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -903,6 +794,7 @@ def _clear_checked_rows(rows: List[Dict[str, Any]]):
 def _build_export_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
     data = []
     for idx, row in enumerate(rows, start=1):
+        bd = _score_bd(row)
         data.append(
             {
                 "번호": idx,
@@ -922,6 +814,15 @@ def _build_export_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
                 "지번주소": _safe_str(row.get("address_jibun")),
                 "위도": _coord_for_export(row.get("latitude")),
                 "경도": _coord_for_export(row.get("longitude")),
+                "프리카스_112신고건수": row.get("precas_112_count"),
+                "프리카스_위험도등급": row.get("precas_risk_grade"),
+                "프리카스_탄력순찰수": row.get("precas_patrol_count"),
+                "프리카스점수": bd.get("precas_total", 0),
+                "환경조사점수": bd.get("field_total", 0),
+                "점포환경설문": bd.get("survey_env", 0),
+                "체감안전도": bd.get("felt_safety", 0),
+                "CPO재량점수": bd.get("discretionary", 0),
+                "총점": bd.get("total", 0),
                 "범죄불안경험": _safe_str(row.get("survey_crime_anxiety")),
                 "야간영업여부": _safe_str(row.get("survey_late_night")),
                 "주변환경": _safe_str(row.get("survey_dark_area")),
@@ -932,13 +833,10 @@ def _build_export_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
                 "기타방범시설": _safe_str(row.get("other_security")),
                 "신청사유": _safe_str(row.get("apply_reason")),
                 "기타메모": _safe_str(row.get("etc_note")),
-                "체감안전도": _felt_safety_score(row),
-                "CPO위험도": _cpo_risk_score(row),
-                "보안취약도": _security_vulnerability_score(row),
-                "총점": _total_score(row),
-                "검토메모": _safe_str(row.get("review_comment")),
+                "검토의견": _safe_str(row.get("review_comment")),
                 "추가서류요청내용": _safe_str(row.get("docs_request_comment")),
                 "제외사유": _safe_str(row.get("exclude_reason")),
+                "CPO재량사유": _safe_str(row.get("cpo_discretionary_reason")),
             }
         )
     return pd.DataFrame(data)
@@ -1065,13 +963,14 @@ def _render_score_guide():
             """
 **우선순위는 아래 항목을 합산하여 산정합니다.**
 
-**총점 = 체감안전도(최대 40점) + CPO 위험도(최대 50점) + 보안취약도(최대 10점)**
+**총점 = 프리카스 데이터(40점) + CPO 현장 환경조사(20점) + 신청인 설문(30점) + CPO 재량점수(10점)**
 
-- **체감안전도(최대 40점)**: 신청 설문 응답을 바탕으로 자동 산출
-- **CPO 위험도(최대 50점)**: 현장 여건과 범죄 취약성을 고려하여 CPO가 직접 입력
-- **보안취약도(최대 10점)**: CCTV 미설치 +4점, 비상벨 미설치 +3점, 사설경비 미이용 +3점
+- **프리카스 데이터(40점)**: 112신고 건수 16점, 위험도 등급 14점, 탄력순찰 수 10점
+- **CPO 현장 환경조사(20점)**: 주변 환경, 위치, 조명, 파출소 거리, 취약시설, 공공 CCTV, 심야 유동인구, 건물 노후도
+- **신청인 설문(30점)**: 점포환경 20점 + 체감안전도 5문항 10점
+- **CPO 재량점수(10점)**: 객관지표 외 현장 위험도 반영. 5점 초과 시 사유 필수, 8점 이상 시 구체 사유 필수
 
-※ 최종 지원 여부는 검토의견과 현장 상황을 함께 반영하여 결정합니다.
+※ 프리카스 점수는 112신고건수, 위험도등급, 탄력순찰수를 모두 입력한 건만 상대평가로 산정됩니다.
 """
         )
 
@@ -1094,6 +993,7 @@ def _render_priority_table(rows: List[Dict[str, Any]]):
 
     table_rows = []
     for idx, row in enumerate(filtered, start=1):
+        bd = _score_bd(row)
         table_rows.append(
             {
                 "순위": idx,
@@ -1101,10 +1001,12 @@ def _render_priority_table(rows: List[Dict[str, Any]]):
                 "신청인": _safe_str(row.get("applicant_name")),
                 "경찰서": _safe_str(row.get("station_label")),
                 "업종": _display_business_type(row),
-                "체감안전도": _felt_safety_score(row),
-                "CPO위험도": _cpo_risk_score(row),
-                "보안취약도": _security_vulnerability_score(row),
-                "총점": _total_score(row),
+                "프리카스": bd.get("precas_total", 0),
+                "환경조사": bd.get("field_total", 0),
+                "점포환경설문": bd.get("survey_env", 0),
+                "체감안전도": bd.get("felt_safety", 0),
+                "CPO재량": bd.get("discretionary", 0),
+                "총점": bd.get("total", 0),
                 "상태": _status_display_text(row.get("current_status")),
             }
         )
@@ -1112,19 +1014,18 @@ def _render_priority_table(rows: List[Dict[str, Any]]):
     if table_rows:
         st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
     else:
-        st.info("우선순위 데이터가 없습니다.")
+        st.info("우선 검토 대상이 없습니다.")
 
 
 def _render_top_metrics(rows: List[Dict[str, Any]]):
     counts = _summary_counts(rows)
-    chip_counts = _status_chip_counts(rows)
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("총 접수", f"{counts['총 접수']}건")
     c2.metric("검토완료", f"{counts['검토완료']}건")
     c3.metric("제외", f"{counts['제외']}건")
     c4.metric("선정", f"{counts['선정']}건")
     c5.metric("미검토", f"{counts['미검토']}건")
-    st.markdown(_status_summary_html(chip_counts), unsafe_allow_html=True)
+    st.markdown(_status_summary_html(counts), unsafe_allow_html=True)
 
 
 def _render_page_ui_css():
@@ -1179,13 +1080,7 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
         return []
 
     visible_ids = [row.get("application_id") for row in rows]
-    selectbox_selected_id = st.session_state.get("selected_application_selectbox")
     current_selected_id = st.session_state.get("selected_application_id")
-
-    if selectbox_selected_id in visible_ids and current_selected_id != selectbox_selected_id:
-        current_selected_id = selectbox_selected_id
-        st.session_state["selected_application_id"] = current_selected_id
-
     if current_selected_id is None or current_selected_id not in visible_ids:
         current_selected_id = rows[0].get("application_id")
         st.session_state["selected_application_id"] = current_selected_id
@@ -1212,9 +1107,11 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
                 "주소": _full_address(row),
                 "위도": _format_coord(row.get("latitude")),
                 "경도": _format_coord(row.get("longitude")),
-                "체감안전도": _felt_safety_score(row),
-                "CPO위험도": _cpo_risk_score(row),
-                "보안취약도": _security_vulnerability_score(row),
+                "프리카스": _score_bd(row).get("precas_total", 0),
+                "환경조사": _score_bd(row).get("field_total", 0),
+                "점포환경설문": _score_bd(row).get("survey_env", 0),
+                "체감안전도": _score_bd(row).get("felt_safety", 0),
+                "CPO재량": _score_bd(row).get("discretionary", 0),
                 "총점": _total_score(row),
                 "상태": _status_display_text(row.get("current_status")),
             }
@@ -1237,9 +1134,11 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
             "주소",
             "위도",
             "경도",
+            "프리카스",
+            "환경조사",
+            "점포환경설문",
             "체감안전도",
-            "CPO위험도",
-            "보안취약도",
+            "CPO재량",
             "총점",
             "상태",
         ],
@@ -1267,7 +1166,7 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
         else:
             next_selected_id = checked_ids[-1]
     else:
-        next_selected_id = current_selected_id or rows[0].get("application_id")
+        next_selected_id = rows[0].get("application_id")
 
     if next_selected_id is not None:
         st.session_state["selected_application_id"] = next_selected_id
@@ -1276,17 +1175,56 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
     return checked_ids
 
 
+def _to_nullable_int(value: Any) -> Optional[int]:
+    text = _safe_str(value)
+    if text == "":
+        return None
+    try:
+        return int(float(text))
+    except Exception:
+        return None
+
+
+def _to_nullable_float(value: Any) -> Optional[float]:
+    text = _safe_str(value)
+    if text == "":
+        return None
+    try:
+        return float(text)
+    except Exception:
+        return None
+
+
+def _normalize_field_value(value: Any) -> Optional[str]:
+    text = _safe_str(value)
+    if not text or text == "미입력":
+        return None
+    return text
+
+
 def _save_review(
     supabase,
     row: Dict[str, Any],
     reviewer_id: str,
     reviewer_station_id: Any,
-    risk_label: str,
     review_status_label: str,
     exclude_flag: bool,
     exclude_reason: str,
     review_comment: str,
     docs_request_comment: str,
+    precas_112_count: Any,
+    precas_risk_grade: Any,
+    precas_patrol_count: Any,
+    field_neighborhood_type: str,
+    field_location_type: str,
+    field_lighting: str,
+    field_police_distance: str,
+    field_vulnerable_facilities: str,
+    field_public_cctv: str,
+    field_foot_traffic: str,
+    field_building_condition: str,
+    cpo_discretionary_score: Any,
+    cpo_discretionary_reason: str,
 ):
     application_id = row.get("application_id")
     if not application_id:
@@ -1300,13 +1238,35 @@ def _save_review(
         "reviewer_id": reviewer_id,
         "station_id": reviewer_station_id,
         "review_result": review_result,
-        "cpo_risk_label": risk_label,
-        "cpo_risk_score": CPO_RISK_OPTIONS.get(risk_label, 0),
+
+        # 예전 컬럼 호환용: 새 점수체계에서는 사용하지 않음
+        "cpo_risk_label": None,
+        "cpo_risk_score": None,
+
         "is_excluded": final_excluded,
         "exclude_reason": _safe_str(exclude_reason),
         "review_comment": _safe_str(review_comment),
         "docs_request_comment": _safe_str(docs_request_comment),
         "reviewed_at": datetime.now().isoformat(),
+
+        # 프리카스: 0도 실제 값이므로 None과 구분
+        "precas_112_count": _to_nullable_int(precas_112_count),
+        "precas_risk_grade": _to_nullable_int(precas_risk_grade),
+        "precas_patrol_count": _to_nullable_int(precas_patrol_count),
+
+        # CPO 현장 환경조사
+        "field_neighborhood_type": _normalize_field_value(field_neighborhood_type),
+        "field_location_type": _normalize_field_value(field_location_type),
+        "field_lighting": _normalize_field_value(field_lighting),
+        "field_police_distance": _normalize_field_value(field_police_distance),
+        "field_vulnerable_facilities": _normalize_field_value(field_vulnerable_facilities),
+        "field_public_cctv": _normalize_field_value(field_public_cctv),
+        "field_foot_traffic": _normalize_field_value(field_foot_traffic),
+        "field_building_condition": _normalize_field_value(field_building_condition),
+
+        # CPO 재량
+        "cpo_discretionary_score": _to_nullable_float(cpo_discretionary_score) or 0,
+        "cpo_discretionary_reason": _safe_str(cpo_discretionary_reason),
     }
 
     supabase.table("cpo_reviews").insert(payload).execute()
@@ -1348,12 +1308,13 @@ def _delete_application(supabase, application_id: Any):
 
 
 def _render_detail_summary_cards(row: Dict[str, Any]):
+    bd = _score_bd(row)
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("현재 상태", _status_label(row.get("current_status")) or "-")
     c1.markdown(f'<div class="cpo-status-current-row">{_status_badge_html(row.get("current_status"))}</div>', unsafe_allow_html=True)
-    c2.metric("체감안전도", f"{_felt_safety_score(row)}점")
-    c3.metric("CPO위험도", f"{_cpo_risk_score(row)}점")
-    c4.metric("총점", f"{_total_score(row)}점")
+    c2.metric("프리카스", f"{bd.get('precas_total', 0)}점")
+    c3.metric("환경조사+설문", f"{round(bd.get('field_total', 0) + bd.get('survey_total', 0), 1)}점")
+    c4.metric("총점", f"{bd.get('total', 0)}점")
 
 
 def _edit_widget_key(prefix: str, field_name: str) -> str:
@@ -1743,12 +1704,48 @@ def _render_semas_reference_box():
     )
 
 
-def _validate_review_inputs(review_status: str, exclude_flag: bool, exclude_reason: str, docs_request_comment: str):
+def _validate_review_inputs(
+    review_status: str,
+    exclude_flag: bool,
+    exclude_reason: str,
+    docs_request_comment: str,
+    precas_112_count: Any,
+    precas_risk_grade: Any,
+    precas_patrol_count: Any,
+    cpo_discretionary_score: Any,
+    cpo_discretionary_reason: str,
+):
     if review_status == "추가서류요청" and not _safe_str(docs_request_comment):
         raise Exception("추가서류요청 상태로 저장하려면 요청 내용을 입력해주세요.")
 
     if (review_status == "제외" or exclude_flag) and not _safe_str(exclude_reason):
         raise Exception("제외로 저장하려면 제외 사유를 입력해주세요.")
+
+    precas_values = [
+        _safe_str(precas_112_count),
+        _safe_str(precas_risk_grade),
+        _safe_str(precas_patrol_count),
+    ]
+    entered_count = sum(1 for x in precas_values if x != "")
+
+    if 0 < entered_count < 3:
+        raise Exception("프리카스 점수는 112신고건수, 위험도등급, 탄력순찰수를 모두 입력해야 산정됩니다.")
+
+    if _safe_str(precas_risk_grade):
+        risk_grade = _safe_int(precas_risk_grade, 0)
+        if risk_grade < 1 or risk_grade > 9:
+            raise Exception("프리카스 위험도 등급은 1~9 사이로 입력해주세요.")
+
+    disc_score = _safe_float(cpo_discretionary_score, 0.0)
+
+    if disc_score < 0 or disc_score > 10:
+        raise Exception("CPO 재량점수는 0~10점 사이로 입력해주세요.")
+
+    if disc_score > 5 and not _safe_str(cpo_discretionary_reason):
+        raise Exception("CPO 재량점수가 5점을 초과하면 사유를 입력해야 합니다.")
+
+    if disc_score >= 8 and len(_safe_str(cpo_discretionary_reason)) < 10:
+        raise Exception("CPO 재량점수가 8점 이상이면 구체 사유를 10자 이상 입력해주세요.")
 
 
 def _render_detail(
@@ -1801,11 +1798,22 @@ def _render_detail(
         st.write(_safe_str(row.get("apply_reason")))
 
     st.markdown("#### 자동 산출 점수")
-    a1, a2, a3, a4 = st.columns(4)
-    a1.metric("체감안전도", f"{_felt_safety_score(row)}점")
-    a2.metric("보안취약도", f"{_security_vulnerability_score(row)}점")
-    a3.metric("CPO위험도", f"{_cpo_risk_score(row)}점")
-    a4.metric("현재 총점", f"{_total_score(row)}점")
+    bd = _score_bd(row)
+
+    a1, a2, a3, a4, a5 = st.columns(5)
+    a1.metric("프리카스", f"{bd.get('precas_total', 0)} / 40점")
+    a2.metric("환경조사", f"{bd.get('field_total', 0)} / 20점")
+    a3.metric("점포환경설문", f"{bd.get('survey_env', 0)} / 20점")
+    a4.metric("체감안전도", f"{bd.get('felt_safety', 0)} / 10점")
+    a5.metric("총점", f"{bd.get('total', 0)} / 100점")
+
+    st.caption(
+        f"프리카스 상세: 112 {bd.get('precas_112', 0)}점, "
+        f"위험등급 {bd.get('precas_risk', 0)}점, "
+        f"탄력순찰 {bd.get('precas_patrol', 0)}점 / "
+        f"CPO 재량 {bd.get('discretionary', 0)}점"
+    )
+
 
     _render_application_edit_section(
         row=row,
@@ -1821,14 +1829,107 @@ def _render_detail(
     st.caption("검토 결과를 저장하면 cpo_reviews에 이력이 쌓이고, applications의 현재 상태도 함께 변경됩니다.")
 
     with st.form(f"review_form_{row.get('application_id')}"):
-        risk_labels = list(CPO_RISK_OPTIONS.keys())
-        current_risk_label = _safe_str(row.get("cpo_risk_label")) or "미입력"
-        risk_index = risk_labels.index(current_risk_label) if current_risk_label in risk_labels else 0
-
         review_status_default = _status_label(row.get("current_status"))
         if review_status_default not in REVIEW_STATUS_OPTIONS:
             review_status_default = "검토완료"
 
+        st.markdown("##### 1. 프리카스 격자 데이터 입력")
+        st.caption("프리카스 100m 격자 기준 조회값을 입력합니다. 3개 값을 모두 입력한 경우에만 프리카스 40점이 산정됩니다.")
+
+        p1, p2, p3 = st.columns(3)
+        with p1:
+            precas_112_count = st.text_input(
+                "112신고 건수",
+                value="" if row.get("precas_112_count") is None else str(row.get("precas_112_count")),
+                placeholder="예: 0, 3, 12",
+            )
+        with p2:
+            precas_risk_grade = st.text_input(
+                "위험도 등급(1~9)",
+                value="" if row.get("precas_risk_grade") is None else str(row.get("precas_risk_grade")),
+                placeholder="1=최위험, 9=낮음",
+            )
+        with p3:
+            precas_patrol_count = st.text_input(
+                "탄력순찰 수",
+                value="" if row.get("precas_patrol_count") is None else str(row.get("precas_patrol_count")),
+                placeholder="예: 0, 1, 5",
+            )
+
+        st.markdown("##### 2. CPO 현장 환경조사 체크리스트")
+
+        f1, f2 = st.columns(2)
+
+        with f1:
+            field_neighborhood_type = st.selectbox(
+                "주변 환경 유형",
+                FIELD_OPTIONS["field_neighborhood_type"],
+                index=FIELD_OPTIONS["field_neighborhood_type"].index(row.get("field_neighborhood_type"))
+                if row.get("field_neighborhood_type") in FIELD_OPTIONS["field_neighborhood_type"] else 0,
+            )
+            field_location_type = st.selectbox(
+                "위치 유형",
+                FIELD_OPTIONS["field_location_type"],
+                index=FIELD_OPTIONS["field_location_type"].index(row.get("field_location_type"))
+                if row.get("field_location_type") in FIELD_OPTIONS["field_location_type"] else 0,
+            )
+            field_lighting = st.selectbox(
+                "야간 가로등·조명",
+                FIELD_OPTIONS["field_lighting"],
+                index=FIELD_OPTIONS["field_lighting"].index(row.get("field_lighting"))
+                if row.get("field_lighting") in FIELD_OPTIONS["field_lighting"] else 0,
+            )
+            field_police_distance = st.selectbox(
+                "파출소·지구대 거리",
+                FIELD_OPTIONS["field_police_distance"],
+                index=FIELD_OPTIONS["field_police_distance"].index(row.get("field_police_distance"))
+                if row.get("field_police_distance") in FIELD_OPTIONS["field_police_distance"] else 0,
+            )
+
+        with f2:
+            field_vulnerable_facilities = st.selectbox(
+                "주변 취약시설",
+                FIELD_OPTIONS["field_vulnerable_facilities"],
+                index=FIELD_OPTIONS["field_vulnerable_facilities"].index(row.get("field_vulnerable_facilities"))
+                if row.get("field_vulnerable_facilities") in FIELD_OPTIONS["field_vulnerable_facilities"] else 0,
+            )
+            field_public_cctv = st.selectbox(
+                "공공 CCTV 현황",
+                FIELD_OPTIONS["field_public_cctv"],
+                index=FIELD_OPTIONS["field_public_cctv"].index(row.get("field_public_cctv"))
+                if row.get("field_public_cctv") in FIELD_OPTIONS["field_public_cctv"] else 0,
+            )
+            field_foot_traffic = st.selectbox(
+                "심야 유동인구",
+                FIELD_OPTIONS["field_foot_traffic"],
+                index=FIELD_OPTIONS["field_foot_traffic"].index(row.get("field_foot_traffic"))
+                if row.get("field_foot_traffic") in FIELD_OPTIONS["field_foot_traffic"] else 0,
+            )
+            field_building_condition = st.selectbox(
+                "건물 노후·고립도",
+                FIELD_OPTIONS["field_building_condition"],
+                index=FIELD_OPTIONS["field_building_condition"].index(row.get("field_building_condition"))
+                if row.get("field_building_condition") in FIELD_OPTIONS["field_building_condition"] else 0,
+            )
+
+        st.markdown("##### 3. CPO 재량점수")
+        d1, d2 = st.columns([1, 3])
+        with d1:
+            cpo_discretionary_score = st.number_input(
+                "재량점수(0~10)",
+                min_value=0.0,
+                max_value=10.0,
+                step=0.5,
+                value=float(_safe_float(row.get("cpo_discretionary_score"), 0.0)),
+            )
+        with d2:
+            cpo_discretionary_reason = st.text_input(
+                "재량점수 사유",
+                value=_safe_str(row.get("cpo_discretionary_reason")),
+                placeholder="예: 인근 여성 1인 점포 밀집, 최근 반복 신고, 현장 체감 위험 높음 등",
+            )
+
+        st.markdown("##### 4. 최종 검토 의견 및 상태")
         r1, r2 = st.columns(2)
         with r1:
             review_status = st.selectbox(
@@ -1837,24 +1938,20 @@ def _render_detail(
                 index=REVIEW_STATUS_OPTIONS.index(review_status_default),
             )
         with r2:
-            risk_label = st.selectbox(
-                "CPO 위험도",
-                risk_labels,
-                index=risk_index,
+            exclude_flag = st.checkbox(
+                "우선순위 제외 대상",
+                value=bool(row.get("is_excluded")) or review_status_default == "제외",
             )
 
-        exclude_flag = st.checkbox(
-            "우선순위 제외 대상",
-            value=bool(row.get("is_excluded")) or review_status == "제외",
-        )
         exclude_reason = st.text_input("제외 사유", value=_safe_str(row.get("exclude_reason")))
-        review_comment = st.text_area("검토 메모", value=_safe_str(row.get("review_comment")), height=100)
+        review_comment = st.text_area("최종 검토 의견", value=_safe_str(row.get("review_comment")), height=100)
         docs_request_comment = st.text_area(
             "추가서류 요청 내용",
             value=_safe_str(row.get("docs_request_comment")),
             height=80,
             placeholder="예: 사업자등록증, 최근 매출현황 증빙자료 제출 요청",
         )
+
         submitted = st.form_submit_button("검토 저장", use_container_width=True)
 
         if submitted:
@@ -1864,21 +1961,41 @@ def _render_detail(
                     exclude_flag=exclude_flag,
                     exclude_reason=exclude_reason,
                     docs_request_comment=docs_request_comment,
+                    precas_112_count=precas_112_count,
+                    precas_risk_grade=precas_risk_grade,
+                    precas_patrol_count=precas_patrol_count,
+                    cpo_discretionary_score=cpo_discretionary_score,
+                    cpo_discretionary_reason=cpo_discretionary_reason,
                 )
+
                 _save_review(
                     supabase=supabase,
                     row=row,
                     reviewer_id=user_id,
                     reviewer_station_id=station_id,
-                    risk_label=risk_label,
                     review_status_label=review_status,
                     exclude_flag=exclude_flag,
                     exclude_reason=exclude_reason,
                     review_comment=review_comment,
                     docs_request_comment=docs_request_comment,
+                    precas_112_count=precas_112_count,
+                    precas_risk_grade=precas_risk_grade,
+                    precas_patrol_count=precas_patrol_count,
+                    field_neighborhood_type=field_neighborhood_type,
+                    field_location_type=field_location_type,
+                    field_lighting=field_lighting,
+                    field_police_distance=field_police_distance,
+                    field_vulnerable_facilities=field_vulnerable_facilities,
+                    field_public_cctv=field_public_cctv,
+                    field_foot_traffic=field_foot_traffic,
+                    field_building_condition=field_building_condition,
+                    cpo_discretionary_score=cpo_discretionary_score,
+                    cpo_discretionary_reason=cpo_discretionary_reason,
                 )
+
                 st.success("검토 결과가 저장되었습니다.")
                 st.rerun()
+
             except Exception as exc:
                 st.error(f"저장 실패: {exc}")
 
@@ -1948,6 +2065,8 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         keyword=keyword,
     )
 
+    st.session_state["current_filtered_rows_for_scoring"] = filtered_rows
+
     _render_top_metrics(filtered_rows)
 
     _render_section_heading("2", "우선 검토 대상 확인", "점수가 높은 점포를 먼저 살펴보고 제외업종 여부를 함께 확인합니다.")
@@ -1976,28 +2095,6 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         date_to=date_to,
         row_count=len(filtered_rows),
     )
-
-    sdsc_target_station = selected_station if role != "admin" else _safe_str(st.session_state.get("admin_station_filter", ""))
-    if sdsc_target_station == "전체":
-        sdsc_target_station = ""
-
-    sdsc_export_df = pd.DataFrame()
-    sdsc_download_bytes = b""
-    sdsc_download_filename = ""
-    sdsc_download_error = ""
-    sdsc_row_count = 0
-
-    if sdsc_target_station:
-        try:
-            sdsc_source_df = _load_sdsc_stores()
-            sdsc_filtered_df = _filter_sdsc_stores_by_station(sdsc_source_df, sdsc_target_station)
-            sdsc_export_df = _build_sdsc_export_df(sdsc_filtered_df)
-            sdsc_row_count = len(sdsc_export_df)
-            if not sdsc_export_df.empty:
-                sdsc_download_bytes = _df_to_excel_bytes(sdsc_export_df)
-                sdsc_download_filename = _build_sdsc_download_filename(sdsc_target_station, sdsc_row_count)
-        except Exception as exc:
-            sdsc_download_error = str(exc)
 
     _render_section_heading("3", "접수 목록 선택 · 다운로드", f"선택 {len(checked_export_rows)}건 / 조회 결과 {len(filtered_rows)}건")
 
@@ -2035,29 +2132,6 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
             use_container_width=True,
             key="download_all_applications_top",
             disabled=all_export_df.empty,
-        )
-
-    sdsc_note_col, sdsc_btn_col = st.columns([4, 2])
-    with sdsc_note_col:
-        if sdsc_download_error:
-            st.markdown(f'<div class="cpo-subtle-note">소상공인 전체 현황 다운로드 준비 실패: {_safe_str(sdsc_download_error)}</div>', unsafe_allow_html=True)
-        elif sdsc_target_station:
-            st.markdown(
-                f'<div class="cpo-page-note">{_station_area_name(sdsc_target_station)} 시군 소상공인 전체 현황 {sdsc_row_count:,}건을 내려받을 수 있습니다.</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown('<div class="cpo-subtle-note">관리자는 관서를 하나 선택하면 해당 시군 소상공인 전체 현황을 내려받을 수 있습니다.</div>', unsafe_allow_html=True)
-    with sdsc_btn_col:
-        st.write("")
-        st.download_button(
-            "해당 관서 소상공인 현황 다운로드",
-            data=sdsc_download_bytes,
-            file_name=sdsc_download_filename or "sdsc_station_export.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            key="download_sdsc_station_top",
-            disabled=(not sdsc_target_station) or bool(sdsc_download_error) or sdsc_export_df.empty,
         )
 
     _render_list_table(filtered_rows)
