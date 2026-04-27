@@ -830,6 +830,7 @@ def _build_export_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
                 "점포내CCTV": _yes_no(row.get("has_cctv")),
                 "비상벨설치": _yes_no(row.get("has_emergency_bell")),
                 "사설경비이용": _security_company_text(row.get("uses_security_company")),
+                "희망물품": _safe_str(row.get("requested_item")),
                 "기타방범시설": _safe_str(row.get("other_security")),
                 "신청사유": _safe_str(row.get("apply_reason")),
                 "기타메모": _safe_str(row.get("etc_note")),
@@ -967,7 +968,7 @@ def _render_score_guide():
 
 - **프리카스 데이터(40점)**: 112신고 건수 16점, 위험도 등급 14점, 탄력순찰 수 10점
 - **CPO 현장 환경조사(20점)**: 주변 환경, 위치, 조명, 파출소 거리, 취약시설, 공공 CCTV, 심야 유동인구, 건물 노후도
-- **신청인 설문(30점)**: 점포환경 20점 + 체감안전도 5문항 10점
+- **신청인 설문(30점)**: 점포환경 7항목 25점 + 체감안전도 5문항 5점
 - **CPO 재량점수(10점)**: 객관지표 외 현장 위험도 반영. 5점 초과 시 사유 필수, 8점 이상 시 구체 사유 필수
 
 ※ 프리카스 점수는 112신고건수, 위험도등급, 탄력순찰수를 모두 입력한 건만 상대평가로 산정됩니다.
@@ -1001,6 +1002,7 @@ def _render_priority_table(rows: List[Dict[str, Any]]):
                 "신청인": _safe_str(row.get("applicant_name")),
                 "경찰서": _safe_str(row.get("station_label")),
                 "업종": _display_business_type(row),
+                "희망물품": _safe_str(row.get("requested_item")) or "-",
                 "프리카스": bd.get("precas_total", 0),
                 "환경조사": bd.get("field_total", 0),
                 "점포환경설문": bd.get("survey_env", 0),
@@ -1107,6 +1109,7 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
                 "주소": _full_address(row),
                 "위도": _format_coord(row.get("latitude")),
                 "경도": _format_coord(row.get("longitude")),
+                "희망물품": _safe_str(row.get("requested_item")) or "-",
                 "프리카스": _score_bd(row).get("precas_total", 0),
                 "환경조사": _score_bd(row).get("field_total", 0),
                 "점포환경설문": _score_bd(row).get("survey_env", 0),
@@ -1134,6 +1137,7 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
             "주소",
             "위도",
             "경도",
+            "희망물품",
             "프리카스",
             "환경조사",
             "점포환경설문",
@@ -1147,6 +1151,11 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
             "선택": st.column_config.CheckboxColumn(
                 "선택",
                 help="체크하면 해당 점포가 아래 지도와 상세정보에 바로 반영되고, 체크한 점포만 다운로드할 수 있습니다.",
+            ),
+            "희망물품": st.column_config.TextColumn(
+                "희망물품",
+                help="점주가 신청서에서 선택한 지원 물품",
+                width="medium",
             ),
         },
         key=f"applications_table_editor_{int(st.session_state.get('applications_table_editor_nonce', 0))}",
