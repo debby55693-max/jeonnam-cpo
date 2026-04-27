@@ -1236,7 +1236,7 @@ def _save_review(
     payload = {
         "application_id": application_id,
         "reviewer_id": reviewer_id,
-        "station_id": reviewer_station_id,
+        "station_id": _to_nullable_int(reviewer_station_id),
         "review_result": review_result,
 
         # 예전 컬럼 호환용: 새 점수체계에서는 사용하지 않음
