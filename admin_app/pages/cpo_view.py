@@ -1109,178 +1109,303 @@ def _render_page_ui_css():
 
         /* ── 페이지 헤더 배너 ── */
         .cpo-page-header {
-            background: linear-gradient(135deg, #1a3f7a 0%, #2563eb 60%, #3b82f6 100%);
+            background: linear-gradient(135deg, #0f2055 0%, #1e40af 55%, #3b82f6 100%);
             border-radius: 18px;
-            padding: 22px 28px;
+            padding: 24px 30px;
             margin-bottom: 20px;
             color: #ffffff;
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: 16px;
+            box-shadow: 0 4px 20px rgba(37,99,235,0.25);
         }
         .cpo-page-header-title {
-            font-size: 22px;
+            font-size: 24px;
             font-weight: 800;
-            letter-spacing: -0.3px;
+            letter-spacing: -0.5px;
         }
         .cpo-page-header-sub {
-            margin-top: 4px;
+            margin-top: 5px;
             font-size: 13px;
-            opacity: 0.85;
+            opacity: 0.82;
+            letter-spacing: 0.1px;
         }
         .cpo-page-header-badge {
-            background: rgba(255,255,255,0.18);
-            border: 1px solid rgba(255,255,255,0.3);
+            background: rgba(255,255,255,0.15);
+            border: 1.5px solid rgba(255,255,255,0.35);
             border-radius: 12px;
-            padding: 8px 18px;
-            font-size: 13px;
-            font-weight: 700;
+            padding: 9px 20px;
+            font-size: 14px;
+            font-weight: 800;
             white-space: nowrap;
+            backdrop-filter: blur(4px);
         }
 
         /* ── 컬러 메트릭 카드 ── */
         .cpo-metrics-row {
             display: flex;
             gap: 10px;
-            margin: 12px 0 20px 0;
+            margin: 14px 0 22px 0;
             flex-wrap: wrap;
         }
         .cpo-metric-card {
             flex: 1;
             min-width: 120px;
-            border-radius: 14px;
-            padding: 14px 16px 12px;
+            border-radius: 16px;
+            padding: 16px 18px 14px;
             border: 1px solid transparent;
             position: relative;
             overflow: hidden;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        .cpo-metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.08);
         }
         .cpo-metric-card::before {
             content: '';
             position: absolute;
             top: 0; left: 0; right: 0;
-            height: 3px;
-            border-radius: 14px 14px 0 0;
+            height: 4px;
+            border-radius: 16px 16px 0 0;
         }
         .cpo-metric-card .cpo-mc-label {
             font-size: 12px;
             font-weight: 700;
-            letter-spacing: 0.2px;
-            margin-bottom: 6px;
+            letter-spacing: 0.3px;
+            margin-bottom: 8px;
+            text-transform: uppercase;
         }
         .cpo-metric-card .cpo-mc-value {
-            font-size: 26px;
+            font-size: 30px;
             font-weight: 800;
             line-height: 1;
+            letter-spacing: -1px;
         }
         .cpo-metric-card .cpo-mc-unit {
             font-size: 12px;
             font-weight: 600;
-            opacity: 0.7;
+            opacity: 0.6;
             margin-left: 2px;
+            letter-spacing: 0;
         }
         /* 색상 변형 */
-        .cpo-mc-total    { background:#f0f6ff; border-color:#bfdbfe; }
-        .cpo-mc-total::before    { background:#2563eb; }
+        .cpo-mc-total    { background:#eef4ff; border-color:#bfdbfe; }
+        .cpo-mc-total::before    { background:linear-gradient(90deg,#2563eb,#60a5fa); }
         .cpo-mc-total    .cpo-mc-label { color:#1e40af; }
         .cpo-mc-total    .cpo-mc-value { color:#1e3a8a; }
 
-        .cpo-mc-reviewed { background:#f0fdf4; border-color:#bbf7d0; }
-        .cpo-mc-reviewed::before { background:#16a34a; }
+        .cpo-mc-reviewed { background:#f0fdf4; border-color:#86efac; }
+        .cpo-mc-reviewed::before { background:linear-gradient(90deg,#16a34a,#4ade80); }
         .cpo-mc-reviewed .cpo-mc-label { color:#15803d; }
         .cpo-mc-reviewed .cpo-mc-value { color:#14532d; }
 
-        .cpo-mc-consider { background:#fffbeb; border-color:#fde68a; }
-        .cpo-mc-consider::before { background:#d97706; }
+        .cpo-mc-consider { background:#fffbeb; border-color:#fcd34d; }
+        .cpo-mc-consider::before { background:linear-gradient(90deg,#d97706,#fbbf24); }
         .cpo-mc-consider .cpo-mc-label { color:#92400e; }
         .cpo-mc-consider .cpo-mc-value { color:#78350f; }
 
         .cpo-mc-selected { background:#ecfdf5; border-color:#6ee7b7; }
-        .cpo-mc-selected::before { background:#059669; }
+        .cpo-mc-selected::before { background:linear-gradient(90deg,#059669,#34d399); }
         .cpo-mc-selected .cpo-mc-label { color:#065f46; }
         .cpo-mc-selected .cpo-mc-value { color:#064e3b; }
 
-        .cpo-mc-excluded { background:#fff1f2; border-color:#fecdd3; }
-        .cpo-mc-excluded::before { background:#dc2626; }
+        .cpo-mc-excluded { background:#fff1f2; border-color:#fca5a5; }
+        .cpo-mc-excluded::before { background:linear-gradient(90deg,#dc2626,#f87171); }
         .cpo-mc-excluded .cpo-mc-label { color:#991b1b; }
         .cpo-mc-excluded .cpo-mc-value { color:#7f1d1d; }
 
         .cpo-mc-pending  { background:#f8fafc; border-color:#cbd5e1; }
-        .cpo-mc-pending::before  { background:#94a3b8; }
+        .cpo-mc-pending::before  { background:linear-gradient(90deg,#94a3b8,#cbd5e1); }
         .cpo-mc-pending  .cpo-mc-label { color:#475569; }
         .cpo-mc-pending  .cpo-mc-value { color:#334155; }
 
         /* ── 리포트 패널 ── */
         .cpo-report-panel {
-            background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
+            background: linear-gradient(135deg, #0f2055 0%, #1e40af 60%, #2563eb 100%);
             border-radius: 16px;
-            padding: 18px 22px;
-            margin-bottom: 12px;
+            padding: 18px 24px;
+            margin-bottom: 14px;
             display: flex;
             align-items: center;
             gap: 16px;
             flex-wrap: wrap;
+            box-shadow: 0 4px 16px rgba(30,58,138,0.2);
         }
         .cpo-report-panel-icon {
-            font-size: 28px;
+            font-size: 30px;
             flex-shrink: 0;
         }
-        .cpo-report-panel-text {
-            flex: 1;
-        }
+        .cpo-report-panel-text { flex: 1; }
         .cpo-report-panel-title {
             font-size: 15px;
             font-weight: 800;
             color: #ffffff;
+            letter-spacing: -0.2px;
         }
         .cpo-report-panel-desc {
             font-size: 12px;
-            color: rgba(255,255,255,0.75);
+            color: rgba(255,255,255,0.72);
             margin-top: 3px;
-        }
-
-        /* ── 필터 영역 ── */
-        .cpo-filter-area {
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 14px;
-            padding: 14px 18px;
-            margin-bottom: 16px;
         }
 
         /* ── 섹션 헤딩 ── */
         .cpo-step-title {
-            margin: 20px 0 12px 0;
-            padding: 0 0 10px 0;
+            margin: 28px 0 14px 0;
+            padding: 0 0 12px 0;
             border-bottom: 2px solid #e2e8f0;
         }
         .cpo-step-badge {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            width: 30px;
-            height: 30px;
+            width: 32px;
+            height: 32px;
             border-radius: 50%;
-            background: linear-gradient(135deg, #2563eb, #3b82f6);
+            background: linear-gradient(135deg, #1e40af, #3b82f6);
             color: #ffffff;
             font-weight: 800;
             margin-right: 10px;
             font-size: 14px;
             vertical-align: middle;
+            box-shadow: 0 2px 8px rgba(37,99,235,0.3);
         }
         .cpo-step-text {
             display: inline-block;
             font-size: 22px;
             font-weight: 800;
             color: #0f172a;
-            letter-spacing: -0.3px;
+            letter-spacing: -0.4px;
             vertical-align: middle;
         }
         .cpo-step-help {
             margin-top: 6px;
-            margin-left: 42px;
+            margin-left: 44px;
             color: #64748b;
             font-size: 13px;
+        }
+
+        /* ── 정보 카드 그리드 ── */
+        .cpo-info-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            padding: 16px 18px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+        }
+        .cpo-info-card-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: #94a3b8;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        .cpo-info-row {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            margin-bottom: 7px;
+            font-size: 13px;
+        }
+        .cpo-info-key {
+            color: #64748b;
+            min-width: 80px;
+            flex-shrink: 0;
+            font-size: 12px;
+        }
+        .cpo-info-val {
+            color: #0f172a;
+            font-weight: 600;
+            word-break: break-all;
+        }
+        .cpo-survey-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 6px;
+            margin-top: 4px;
+        }
+        .cpo-survey-chip {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 12px;
+        }
+        .cpo-survey-chip-label { color: #64748b; }
+        .cpo-survey-chip-val   { color: #0f172a; font-weight: 700; }
+        .cpo-survey-chip.warn  { background: #fff7ed; border-color: #fed7aa; }
+        .cpo-survey-chip.warn .cpo-survey-chip-val { color: #c2410c; }
+        .cpo-survey-chip.good  { background: #f0fdf4; border-color: #bbf7d0; }
+        .cpo-survey-chip.good .cpo-survey-chip-val { color: #15803d; }
+        .cpo-address-bar {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 10px;
+            padding: 10px 14px;
+            font-size: 13px;
+            color: #1e3a8a;
+            font-weight: 600;
+            margin: 8px 0 14px 0;
+        }
+        .cpo-reason-box {
+            background: #fefce8;
+            border: 1px solid #fde68a;
+            border-left: 4px solid #d97706;
+            border-radius: 0 10px 10px 0;
+            padding: 10px 14px;
+            font-size: 13px;
+            color: #78350f;
+            margin: 8px 0 14px 0;
+            line-height: 1.6;
+        }
+
+        /* ── 폼 섹션 헤딩 ── */
+        .cpo-form-section {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-left: 4px solid #2563eb;
+            border-radius: 0 10px 10px 0;
+            padding: 9px 14px;
+            margin: 20px 0 10px 0;
+        }
+        .cpo-form-section.green  { border-left-color: #16a34a; }
+        .cpo-form-section.amber  { border-left-color: #d97706; }
+        .cpo-form-section.slate  { border-left-color: #475569; }
+        .cpo-form-section-num {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #2563eb;
+            color: #fff;
+            font-size: 11px;
+            font-weight: 800;
+            flex-shrink: 0;
+        }
+        .cpo-form-section.green .cpo-form-section-num  { background: #16a34a; }
+        .cpo-form-section.amber .cpo-form-section-num  { background: #d97706; }
+        .cpo-form-section.slate .cpo-form-section-num  { background: #475569; }
+        .cpo-form-section-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .cpo-form-section-sub {
+            font-size: 12px;
+            color: #64748b;
+            margin-left: auto;
         }
 
         /* ── 공통 텍스트 ── */
@@ -1293,17 +1418,13 @@ def _render_page_ui_css():
         /* ── 상태 배지 ── */
         .cpo-status-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
         .cpo-status-chip {
-            display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+            display: inline-flex; align-items: center; justify-content: center; gap: 6px;
             min-height: 28px; padding: 3px 12px; border-radius: 999px;
             font-size: 12px; font-weight: 700; border: 1px solid transparent; white-space: nowrap;
         }
         .cpo-status-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: currentColor;
-            flex: 0 0 10px;
-            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.28);
+            width: 8px; height: 8px; border-radius: 50%;
+            background: currentColor; flex: 0 0 8px;
         }
         .cpo-status-chip.neutral   { background:#f8fafc; color:#334155; border-color:#cbd5e1; }
         .cpo-status-chip.submitted { background:#f8fafc; color:#475569; border-color:#cbd5e1; }
@@ -1318,6 +1439,10 @@ def _render_page_ui_css():
         div[data-testid="stButton"] > button,
         div[data-testid="stDownloadButton"] > button {
             min-height: 40px; font-weight: 600; border-radius: 10px;
+            transition: all 0.15s ease;
+        }
+        div[data-testid="stButton"] > button:hover {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.12);
         }
         /* ── 라벨 ── */
         div[data-testid="stTextInput"] label,
@@ -1327,6 +1452,49 @@ def _render_page_ui_css():
         div[data-testid="stTextArea"] label,
         div[data-testid="stCheckbox"] label,
         div[data-testid="stRadio"] label { font-weight: 600; }
+
+        /* ── 지도 네비게이션 바 ── */
+        .cpo-map-nav {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 10px 16px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .cpo-map-nav-label {
+            font-size: 12px;
+            color: #64748b;
+        }
+
+        /* ── CPO 검토 입력 배너 ── */
+        .cpo-review-header {
+            background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 100%);
+            border-radius: 12px;
+            padding: 14px 20px;
+            margin: 20px 0 14px 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .cpo-review-header-icon { font-size: 22px; }
+        .cpo-review-header-title {
+            font-size: 16px;
+            font-weight: 800;
+            color: #ffffff;
+        }
+        .cpo-review-header-sub {
+            font-size: 12px;
+            color: rgba(255,255,255,0.72);
+            margin-top: 2px;
+        }
+
+        /* ── Expander 스타일 ── */
+        details > summary {
+            font-weight: 700;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -1964,7 +2132,12 @@ def _fetch_review_history(supabase, application_id: Any) -> List[Dict[str, Any]]
 
 
 def _render_review_history(supabase, application_id: Any):
-    st.markdown("#### 검토 이력")
+    st.markdown(
+        '<div style="font-size:13px;font-weight:700;color:#475569;margin:18px 0 6px;'
+        'padding:8px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">'
+        '🕑 검토 이력</div>',
+        unsafe_allow_html=True,
+    )
     history_rows = _fetch_review_history(supabase, application_id)
     if not history_rows:
         st.info("저장된 검토 이력이 없습니다.")
@@ -2084,43 +2257,98 @@ def _render_detail(
     )
     _render_detail_summary_cards(row)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.write(f"**점포명**: {_safe_str(row.get('business_name')) or '-'}")
-        st.write(f"**신청인**: {_safe_str(row.get('applicant_name')) or '-'}")
-        st.write(f"**연락처**: {_safe_str(row.get('phone')) or '-'}")
-        st.write(f"**업종**: {_display_business_type(row)}")
-        st.write(f"**연매출**: {_display_sales(row)}")
-        st.write(f"**연매출 구간**: {_safe_str(row.get('sales_band')) or '-'}")
-    with c2:
-        st.write(f"**접수일시**: {_format_submitted_text(row.get('submitted_at'))}")
-        st.write(f"**관할 경찰서**: {_safe_str(row.get('station_label')) or '-'}")
-        st.write(f"**위도**: {_format_coord(row.get('latitude'))}")
-        st.write(f"**경도**: {_format_coord(row.get('longitude'))}")
-        st.write(f"**비상벨 설치 여부**: {'있음' if bool(row.get('has_emergency_bell')) else '없음'}")
-        st.write(f"**사설경비 이용 여부**: {'이용 중' if bool(row.get('uses_security_company')) else '이용하지 않음'}")
+    # ── 기본 정보 + 방범시설 카드 그리드 ──────────────────────────
+    has_cctv_val = "있음" if bool(row.get("has_cctv")) else "없음"
+    has_bell_val = "있음" if bool(row.get("has_emergency_bell")) else "없음"
+    has_sec_val  = "이용 중" if bool(row.get("uses_security_company")) else "이용 안 함"
+    other_sec    = _safe_str(row.get("other_security")) or "-"
+    lat_val      = _format_coord(row.get("latitude"))
+    lon_val      = _format_coord(row.get("longitude"))
+    full_addr    = _full_address(row)
 
-    st.markdown("#### 위치 정보")
-    st.write(f"**주소**: {_full_address(row)}")
+    def _tr(key: str, val: str) -> str:
+        return (
+            f'<div class="cpo-info-row">'
+            f'<span class="cpo-info-key">{key}</span>'
+            f'<span class="cpo-info-val">{val}</span>'
+            f'</div>'
+        )
 
-    st.markdown("#### 설문 응답")
-    s1, s2 = st.columns(2)
-    with s1:
-        st.write(f"- 범죄 불안 경험: {_safe_str(row.get('survey_crime_anxiety')) or '-'}")
-        st.write(f"- 야간 영업 여부: {_safe_str(row.get('survey_late_night')) or '-'}")
-        st.write(f"- 주변 환경: {_safe_str(row.get('survey_dark_area')) or '-'}")
-        st.write(f"- 단독 근무: {_safe_str(row.get('survey_single_worker')) or '-'}")
-    with s2:
-        st.write(f"- 점포 내 CCTV: {'있음' if bool(row.get('has_cctv')) else '없음'}")
-        st.write(f"- 사설경비 이용: {'이용 중' if bool(row.get('uses_security_company')) else '이용하지 않음'}")
-        st.write(f"- 비상벨 설치: {'있음' if bool(row.get('has_emergency_bell')) else '없음'}")
-        st.write(f"- 기타 방범시설: {_safe_str(row.get('other_security')) or '-'}")
+    st.markdown(
+        f"""
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:10px 0 4px;">
+          <div class="cpo-info-card">
+            <div class="cpo-info-card-title">🏪 점포 기본 정보</div>
+            {_tr("점포명", _safe_str(row.get("business_name")) or "-")}
+            {_tr("신청인", _safe_str(row.get("applicant_name")) or "-")}
+            {_tr("연락처", _safe_str(row.get("phone")) or "-")}
+            {_tr("업종", _display_business_type(row))}
+            {_tr("연매출", _display_sales(row))}
+            {_tr("연매출 구간", _safe_str(row.get("sales_band")) or "-")}
+            {_tr("접수일시", _format_submitted_text(row.get("submitted_at")))}
+            {_tr("관할 경찰서", _safe_str(row.get("station_label")) or "-")}
+          </div>
+          <div class="cpo-info-card">
+            <div class="cpo-info-card-title">📍 위치 · 방범시설</div>
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;
+                        padding:8px 11px;font-size:12px;color:#1e3a8a;font-weight:600;
+                        margin-bottom:10px;line-height:1.5;">{full_addr}</div>
+            {_tr("위도", lat_val)}
+            {_tr("경도", lon_val)}
+            {_tr("CCTV", has_cctv_val)}
+            {_tr("비상벨", has_bell_val)}
+            {_tr("사설경비", has_sec_val)}
+            {_tr("기타 방범시설", other_sec)}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ── 점주 설문 응답 카드 ──────────────────────────────────────
+    def _survey_chip(label: str, val: str, warn: bool = False, good: bool = False) -> str:
+        cls = "warn" if warn else ("good" if good else "")
+        return (
+            f'<div class="cpo-survey-chip {cls}">'
+            f'<span class="cpo-survey-chip-label">{label}</span>'
+            f'<span class="cpo-survey-chip-val">{val or "-"}</span>'
+            f'</div>'
+        )
+
+    crime_anxiety = _safe_str(row.get("survey_crime_anxiety")) or "-"
+    late_night    = _safe_str(row.get("survey_late_night")) or "-"
+    dark_area     = _safe_str(row.get("survey_dark_area")) or "-"
+    single_worker = _safe_str(row.get("survey_single_worker")) or "-"
+
+    st.markdown(
+        f"""
+        <div class="cpo-info-card" style="margin:8px 0 12px;">
+          <div class="cpo-info-card-title">📋 점주 설문 응답</div>
+          <div class="cpo-survey-grid">
+            {_survey_chip("범죄 불안 경험", crime_anxiety, warn="있음" in crime_anxiety)}
+            {_survey_chip("야간 영업", late_night, warn="예" in late_night or "있음" in late_night)}
+            {_survey_chip("주변 환경", dark_area)}
+            {_survey_chip("단독 근무", single_worker, warn="예" in single_worker or "혼자" in single_worker)}
+            {_survey_chip("점포 내 CCTV", has_cctv_val, good=has_cctv_val=="있음")}
+            {_survey_chip("비상벨", has_bell_val, good=has_bell_val=="있음")}
+            {_survey_chip("사설경비", has_sec_val, good=has_sec_val=="이용 중")}
+            {_survey_chip("기타 방범시설", other_sec)}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if _safe_str(row.get("apply_reason")):
-        st.markdown("#### 신청 사유")
-        st.write(_safe_str(row.get("apply_reason")))
+        st.markdown(
+            f'<div class="cpo-reason-box">📝 <b>신청 사유</b><br>{_safe_str(row.get("apply_reason"))}</div>',
+            unsafe_allow_html=True,
+        )
 
-    st.markdown("#### 자동 산출 점수")
+    st.markdown(
+        '<div style="font-size:13px;font-weight:700;color:#1e3a8a;margin:14px 0 6px;">📊 자동 산출 점수</div>',
+        unsafe_allow_html=True,
+    )
     bd = _score_bd(row)
 
     score_html = f"""
@@ -2163,17 +2391,34 @@ def _render_detail(
 
     _render_review_history(supabase, row.get("application_id"))
 
-    st.markdown("#### CPO 검토 입력")
-    st.markdown(f'<div class="cpo-status-current-row">저장 전 현재 상태 {_status_badge_html(row.get("current_status"))}</div>', unsafe_allow_html=True)
-    st.caption("검토 결과를 저장하면 cpo_reviews에 이력이 쌓이고, applications의 현재 상태도 함께 변경됩니다.")
+    st.markdown(
+        f"""
+        <div class="cpo-review-header">
+          <div class="cpo-review-header-icon">✏️</div>
+          <div>
+            <div class="cpo-review-header-title">CPO 검토 입력</div>
+            <div class="cpo-review-header-sub">검토 결과를 저장하면 이력이 기록되고 신청 상태가 함께 변경됩니다. &nbsp;·&nbsp; 현재 상태: {_status_badge_html(row.get("current_status"))}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     with st.form(f"review_form_{row.get('application_id')}"):
         review_status_default = _status_label(row.get("current_status"))
         if review_status_default not in REVIEW_STATUS_OPTIONS:
             review_status_default = "검토완료"
 
-        st.markdown("##### 1. 치안현황 데이터 입력 (경찰 내부 시스템)")
-        st.caption("경찰청 프리카스(PRECAS) 100m 격자 기준 조회값을 입력합니다. 4개 항목을 모두 입력해야 최대 40점이 산정됩니다.")
+        st.markdown(
+            '<div class="cpo-form-section">'
+            '<span class="cpo-form-section-num">1</span>'
+            '<div>'
+            '<div class="cpo-form-section-title">치안현황 데이터 입력</div>'
+            '</div>'
+            '<span class="cpo-form-section-sub">경찰청 PRECAS 100m 격자 · 4개 항목 모두 입력 시 최대 40점</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
         p1, p2, p3, p4 = st.columns(4)
         with p1:
@@ -2201,7 +2446,16 @@ def _render_detail(
                 placeholder="예: 0, 2, 8",
             )
 
-        st.markdown("##### 2. CPO 현장 안전평가 (현장 방문 후 입력)")
+        st.markdown(
+            '<div class="cpo-form-section green">'
+            '<span class="cpo-form-section-num">2</span>'
+            '<div>'
+            '<div class="cpo-form-section-title">CPO 현장 안전평가</div>'
+            '</div>'
+            '<span class="cpo-form-section-sub">현장 방문 후 직접 입력 · 최대 20점</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
         f1, f2 = st.columns(2)
 
@@ -2251,7 +2505,16 @@ def _render_detail(
                 if row.get("field_building_condition") in FIELD_OPTIONS["field_building_condition"] else 0,
             )
 
-        st.markdown("##### 3. 위원회 평가 점수 (객관 지표 외 위원회 검토 반영)")
+        st.markdown(
+            '<div class="cpo-form-section amber">'
+            '<span class="cpo-form-section-num">3</span>'
+            '<div>'
+            '<div class="cpo-form-section-title">위원회 평가 점수</div>'
+            '</div>'
+            '<span class="cpo-form-section-sub">객관 지표 외 위원회 검토 반영 · 최대 10점 · 5점 초과 시 사유 필수</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
         d1, d2 = st.columns([1, 3])
         with d1:
             cpo_discretionary_score = st.number_input(
@@ -2268,7 +2531,15 @@ def _render_detail(
                 placeholder="예: 인근 여성 1인 점포 밀집, 최근 반복 신고, 현장 체감 위험 높음 등",
             )
 
-        st.markdown("##### 4. 최종 검토 의견 및 처리 상태")
+        st.markdown(
+            '<div class="cpo-form-section slate">'
+            '<span class="cpo-form-section-num">4</span>'
+            '<div>'
+            '<div class="cpo-form-section-title">최종 검토 의견 및 처리 상태</div>'
+            '</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
         r1, r2 = st.columns(2)
         with r1:
             review_status = st.selectbox(
@@ -2370,42 +2641,51 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     today = date.today()
     default_from = today - timedelta(days=30)
 
+    # ── 필터 영역 (스타일 컨테이너) ────────────────────────────────
+    st.markdown(
+        '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;'
+        'padding:14px 18px 6px;margin:10px 0 16px;">',
+        unsafe_allow_html=True,
+    )
+
     if role == "admin":
         admin_station_options = ["전체"] + station_label_options
         admin_station_default = st.session_state.get("admin_station_filter") or "전체"
         if admin_station_default not in admin_station_options:
             admin_station_default = "전체"
 
-        st.markdown(f'<div class="cpo-page-note">현재 선택 경찰서: {admin_station_default}</div>', unsafe_allow_html=True)
-
         f0, f1, f2, f3, f4 = st.columns([2, 2, 2, 2, 3])
         with f0:
             selected_station = st.selectbox(
-                "경찰서",
+                "🏢 경찰서",
                 admin_station_options,
                 index=admin_station_options.index(admin_station_default),
                 key="admin_station_filter",
             )
         with f1:
-            status_filter = st.selectbox("상태", STATUS_FILTER_OPTIONS, index=0, key="status_filter")
+            status_filter = st.selectbox("🔖 상태", STATUS_FILTER_OPTIONS, index=0, key="status_filter")
         with f2:
-            date_from = st.date_input("접수 시작일", value=default_from, key="date_from")
+            date_from = st.date_input("📅 접수 시작일", value=default_from, key="date_from")
         with f3:
-            date_to = st.date_input("접수 종료일", value=today, key="date_to")
+            date_to = st.date_input("📅 접수 종료일", value=today, key="date_to")
         with f4:
-            keyword = st.text_input("점포명 / 신청인 / 주소 검색", key="keyword")
+            keyword = st.text_input("🔍 점포명 / 신청인 / 주소 검색", key="keyword")
     else:
-        st.markdown(f'<div class="cpo-page-note">관할 경찰서: {selected_station}</div>', unsafe_allow_html=True)
-
+        st.markdown(
+            f'<div style="font-size:13px;font-weight:700;color:#1e40af;margin-bottom:6px;">🏢 관할 경찰서: {selected_station}</div>',
+            unsafe_allow_html=True,
+        )
         f1, f2, f3, f4 = st.columns([2, 2, 2, 3])
         with f1:
-            status_filter = st.selectbox("상태", STATUS_FILTER_OPTIONS, index=0, key="status_filter")
+            status_filter = st.selectbox("🔖 상태", STATUS_FILTER_OPTIONS, index=0, key="status_filter")
         with f2:
-            date_from = st.date_input("접수 시작일", value=default_from, key="date_from")
+            date_from = st.date_input("📅 접수 시작일", value=default_from, key="date_from")
         with f3:
-            date_to = st.date_input("접수 종료일", value=today, key="date_to")
+            date_to = st.date_input("📅 접수 종료일", value=today, key="date_to")
         with f4:
-            keyword = st.text_input("점포명 / 신청인 / 주소 검색", key="keyword")
+            keyword = st.text_input("🔍 점포명 / 신청인 / 주소 검색", key="keyword")
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
     _render_section_heading("1", "접수 조회", "경찰서·상태·기간·검색어를 먼저 정한 뒤 아래 목록과 지도 대상을 확인합니다.")
 
@@ -2450,7 +2730,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
         row_count=len(filtered_rows),
     )
 
-    _render_section_heading("3", "접수 목록 선택 · 다운로드", f"선택 {len(checked_export_rows)}건 / 조회 결과 {len(filtered_rows)}건")
+    _render_section_heading("3", "접수 목록 선택 · 다운로드", f"현재 조회 결과 {len(filtered_rows)}건 · 체크된 항목 {len(checked_export_rows)}건")
 
     # ── 위원회 리포트 패널 ──────────────────────────────────
     precas_scores_for_report = compute_precas_scores_batch(filtered_rows)
@@ -2509,20 +2789,26 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     # ── 목록 툴바 ──────────────────────────────────────────
     st.markdown(
         f"""
-        <div style="background:#f0f6ff;border:1px solid #bfdbfe;border-radius:12px;
-                    padding:10px 16px;margin:8px 0 6px;display:flex;align-items:center;gap:8px;">
-          <span style="font-size:13px;font-weight:700;color:#1e40af;">📋 접수 목록</span>
-          <span style="font-size:12px;color:#3b82f6;">
-            조회 {len(filtered_rows)}건 · 체크 {len(checked_ids_for_download)}건
-          </span>
+        <div style="background:linear-gradient(90deg,#eff6ff,#f8fafc);border:1px solid #bfdbfe;
+                    border-left:4px solid #2563eb;border-radius:0 12px 12px 0;
+                    padding:10px 16px;margin:8px 0 6px;display:flex;align-items:center;
+                    justify-content:space-between;flex-wrap:wrap;gap:8px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="font-size:13px;font-weight:800;color:#1e40af;">📋 접수 목록</span>
+            <span style="font-size:12px;color:#3b82f6;background:#dbeafe;border-radius:6px;
+                         padding:2px 8px;font-weight:700;">조회 {len(filtered_rows)}건</span>
+            <span style="font-size:12px;color:#0369a1;background:#e0f2fe;border-radius:6px;
+                         padding:2px 8px;font-weight:700;">체크 {len(checked_ids_for_download)}건</span>
+          </div>
+          <span style="font-size:11px;color:#64748b;">체크박스 선택 → 아래 지도·상세정보 변경</span>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    tb_c1, tb_c2, tb_c3, tb_c4, tb_c5 = st.columns([2, 1, 1, 1.4, 1.4])
+    tb_c1, tb_c2, tb_c3, tb_c4, tb_c5 = st.columns([2.5, 1, 1, 1.4, 1.4])
     with tb_c1:
-        st.caption("목록에서 체크박스를 선택하면 하단 지도·상세 정보가 변경됩니다.")
+        st.caption("")
     with tb_c2:
         if st.button("✅ 전체 선택", use_container_width=True, key="bulk_check_visible_rows"):
             _bulk_check_rows(filtered_rows)
@@ -2555,19 +2841,41 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     _render_list_table(filtered_rows)
 
     _render_section_heading("4", "지도 확인 · 상세 검토 저장", "목록에서 선택한 점포의 위치를 확인하고 아래에서 검토 내용을 저장합니다.")
-    st.markdown("### 선택 접수 지도")
-    st.markdown('<div class="cpo-subtle-note">목록에서 체크한 항목이 아니라 현재 선택된 1건을 중심으로 지도와 상세정보가 바뀝니다.</div>', unsafe_allow_html=True)
     selected_row = _selected_row(filtered_rows)
 
     if filtered_rows:
         _sync_selected_row_by_selectbox(filtered_rows)
         selected_row = _selected_row(filtered_rows)
 
-        n1, n2, n3 = st.columns([1, 1, 2.5])
+        # ── 현재 선택 점포 정보 배너 ──
+        current_idx = 0
+        ids = [row.get("application_id") for row in filtered_rows]
+        current_id = st.session_state.get("selected_application_id")
+        if current_id in ids:
+            current_idx = ids.index(current_id)
+        cur_biz   = _safe_str(selected_row.get("business_name")) if selected_row else "-"
+        cur_total = _total_score(selected_row) if selected_row else 0
+
+        st.markdown(
+            f"""
+            <div style="background:#f0f6ff;border:1px solid #bfdbfe;border-radius:12px;
+                        padding:10px 16px;margin:6px 0 10px;display:flex;
+                        align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <span style="font-size:13px;font-weight:800;color:#1e40af;">📍 선택 점포</span>
+                <span style="font-size:14px;font-weight:700;color:#0f172a;">{cur_biz}</span>
+                <span style="font-size:12px;color:#3b82f6;">{current_idx+1} / {len(filtered_rows)}건</span>
+              </div>
+              <span style="font-size:13px;font-weight:800;color:#1e3a8a;background:#dbeafe;
+                           border-radius:8px;padding:3px 10px;">총점 {cur_total}점</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        n1, n2, n3 = st.columns([1, 1, 3])
         with n1:
-            if st.button("이전 신청", use_container_width=True):
-                ids = [row.get("application_id") for row in filtered_rows]
-                current_id = st.session_state.get("selected_application_id")
+            if st.button("◀ 이전 신청", use_container_width=True):
                 if current_id not in ids:
                     st.session_state["selected_application_id"] = ids[0]
                     st.session_state["selected_application_selectbox"] = ids[0]
@@ -2577,9 +2885,7 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
                 st.session_state["selected_application_selectbox"] = st.session_state.get("selected_application_id")
                 st.rerun()
         with n2:
-            if st.button("다음 신청", use_container_width=True):
-                ids = [row.get("application_id") for row in filtered_rows]
-                current_id = st.session_state.get("selected_application_id")
+            if st.button("다음 신청 ▶", use_container_width=True):
                 if current_id not in ids:
                     st.session_state["selected_application_id"] = ids[0]
                     st.session_state["selected_application_selectbox"] = ids[0]
@@ -2589,16 +2895,15 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
                 st.session_state["selected_application_selectbox"] = st.session_state.get("selected_application_id")
                 st.rerun()
         with n3:
-            st.markdown('<div class="cpo-subtle-note">접수 목록에서 선택을 바꾸면 지도와 아래 상세정보가 함께 바뀝니다.</div>', unsafe_allow_html=True)
+            st.caption("이전/다음 버튼 또는 위 드롭다운에서 점포를 바꾸면 지도·상세정보가 함께 변경됩니다.")
 
         _render_map(filtered_rows, selected_row)
 
         if selected_row:
-            st.caption(
-                f"현재 선택: {_safe_str(selected_row.get('business_name'))} / "
-                f"위도 {_format_coord(selected_row.get('latitude'))} / "
-                f"경도 {_format_coord(selected_row.get('longitude'))}"
-            )
+            lat_disp = _format_coord(selected_row.get("latitude"))
+            lon_disp = _format_coord(selected_row.get("longitude"))
+            if lat_disp != "-" and lon_disp != "-":
+                st.caption(f"📌 좌표: 위도 {lat_disp} · 경도 {lon_disp}")
     else:
         st.info("조회 결과가 없습니다.")
 
