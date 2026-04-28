@@ -193,17 +193,14 @@ def _review_status_value(label: str, exclude_flag: bool) -> str:
 
 def _status_display_text(value: Any) -> str:
     label = _status_label(_safe_str(value))
-    meta = STATUS_DISPLAY_META.get(label)
-    if not meta:
-        return label or "-"
-    return f"{meta['icon']} {label}"
+    return label or "-"
 
 
 def _status_badge_html(value: Any) -> str:
     label = _status_label(_safe_str(value))
     meta = STATUS_DISPLAY_META.get(label, {"class": "neutral"})
     css_class = meta.get("class", "neutral")
-    return f'<span class="cpo-status-chip {css_class}">{label or "-"}</span>'
+    return f'<span class="cpo-status-chip {css_class}"><span class="cpo-status-dot"></span>{label or "-"}</span>'
 
 
 def _status_summary_html(counts: Dict[str, int]) -> str:
@@ -213,7 +210,7 @@ def _status_summary_html(counts: Dict[str, int]) -> str:
         meta = STATUS_DISPLAY_META.get(label, {"class": "neutral"})
         css_class = meta.get("class", "neutral")
         count = counts.get(label, 0)
-        chips.append(f'<span class="cpo-status-chip {css_class}">{label} {count}건</span>')
+        chips.append(f'<span class="cpo-status-chip {css_class}"><span class="cpo-status-dot"></span>{label} {count}건</span>')
     return '<div class="cpo-status-chip-row">' + ''.join(chips) + '</div>'
 
 
@@ -400,6 +397,7 @@ def _inject_page_styles():
             display: inline-flex;
             align-items: center;
             justify-content: center;
+            gap: 7px;
             min-height: 30px;
             padding: 4px 12px;
             border-radius: 999px;
@@ -407,6 +405,14 @@ def _inject_page_styles():
             font-weight: 700;
             border: 1px solid transparent;
             white-space: nowrap;
+        }
+        .cpo-status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: currentColor;
+            flex: 0 0 10px;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.28);
         }
         .cpo-status-chip.neutral {
             background: #F8FAFC;
@@ -1287,9 +1293,17 @@ def _render_page_ui_css():
         /* ── 상태 배지 ── */
         .cpo-status-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
         .cpo-status-chip {
-            display: inline-flex; align-items: center; justify-content: center;
+            display: inline-flex; align-items: center; justify-content: center; gap: 7px;
             min-height: 28px; padding: 3px 12px; border-radius: 999px;
             font-size: 12px; font-weight: 700; border: 1px solid transparent; white-space: nowrap;
+        }
+        .cpo-status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: currentColor;
+            flex: 0 0 10px;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.28);
         }
         .cpo-status-chip.neutral   { background:#f8fafc; color:#334155; border-color:#cbd5e1; }
         .cpo-status-chip.submitted { background:#f8fafc; color:#475569; border-color:#cbd5e1; }
