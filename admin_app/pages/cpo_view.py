@@ -17,6 +17,7 @@ try:
         compute_total_score,
         score_breakdown,
     )
+    from core.report import generate_report, generate_report_zip
 except Exception:
     from admin_app.core.scoring import (
         FIELD_OPTIONS,
@@ -24,6 +25,7 @@ except Exception:
         compute_total_score,
         score_breakdown,
     )
+    from admin_app.core.report import generate_report, generate_report_zip
 
 
 STATUS_LABELS = {
@@ -720,18 +722,21 @@ def _summary_counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
     counts = {
         "총 접수": len(rows),
         "검토완료": 0,
-        "제외": 0,
+        "선정고려": 0,
         "선정": 0,
+        "제외": 0,
         "미검토": 0,
     }
     for row in rows:
         status = _status_label(row.get("current_status"))
         if status == "검토완료":
             counts["검토완료"] += 1
-        elif status == "제외":
-            counts["제외"] += 1
+        elif status == "선정고려":
+            counts["선정고려"] += 1
         elif status == "선정":
             counts["선정"] += 1
+        elif status == "제외":
+            counts["제외"] += 1
         elif status in ["접수완료", "검토중", "추가서류요청"]:
             counts["미검토"] += 1
     return counts
@@ -1019,55 +1024,254 @@ def _render_priority_table(rows: List[Dict[str, Any]]):
         st.info("우선 검토 대상이 없습니다.")
 
 
+def _render_metric_card(value: int, label: str, css_class: str, unit: str = "건") -> str:
+    return (
+        f'<div class="cpo-metric-card {css_class}">'
+        f'<div class="cpo-mc-label">{label}</div>'
+        f'<div class="cpo-mc-value">{value}<span class="cpo-mc-unit">{unit}</span></div>'
+        f'</div>'
+    )
+
+
 def _render_top_metrics(rows: List[Dict[str, Any]]):
     counts = _summary_counts(rows)
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("총 접수", f"{counts['총 접수']}건")
-    c2.metric("검토완료", f"{counts['검토완료']}건")
-    c3.metric("제외", f"{counts['제외']}건")
-    c4.metric("선정", f"{counts['선정']}건")
-    c5.metric("미검토", f"{counts['미검토']}건")
-    st.markdown(_status_summary_html(counts), unsafe_allow_html=True)
+    cards_html = (
+        '<div class="cpo-metrics-row">'
+        + _render_metric_card(counts["총 접수"],  "📋 총 접수",   "cpo-mc-total")
+        + _render_metric_card(counts["검토완료"],  "✅ 검토완료",  "cpo-mc-reviewed")
+        + _render_metric_card(counts["선정고려"],  "⭐ 선정고려",  "cpo-mc-consider")
+        + _render_metric_card(counts["선정"],      "🎯 선정",      "cpo-mc-selected")
+        + _render_metric_card(counts["제외"],      "🚫 제외",      "cpo-mc-excluded")
+        + _render_metric_card(counts["미검토"],    "⏳ 미검토",    "cpo-mc-pending")
+        + '</div>'
+    )
+    st.markdown(cards_html, unsafe_allow_html=True)
 
 
 def _render_page_ui_css():
     st.markdown(
         """
         <style>
+        /* ── 전체 레이아웃 ── */
         .block-container {
-            max-width: 1480px;
-            padding-top: 1.4rem;
+            max-width: 1520px;
+            padding-top: 0.6rem;
             padding-bottom: 2.4rem;
         }
-        h1 {
-            margin-bottom: 0.3rem !important;
+        h1, h2, h3 { letter-spacing: -0.3px; }
+
+        /* ── 페이지 헤더 배너 ── */
+        .cpo-page-header {
+            background: linear-gradient(135deg, #1a3f7a 0%, #2563eb 60%, #3b82f6 100%);
+            border-radius: 18px;
+            padding: 22px 28px;
+            margin-bottom: 20px;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
         }
-        div[data-testid="stMetric"] {
-            background: #ffffff;
-            border: 1px solid #eef2f7;
+        .cpo-page-header-title {
+            font-size: 22px;
+            font-weight: 800;
+            letter-spacing: -0.3px;
+        }
+        .cpo-page-header-sub {
+            margin-top: 4px;
+            font-size: 13px;
+            opacity: 0.85;
+        }
+        .cpo-page-header-badge {
+            background: rgba(255,255,255,0.18);
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 12px;
+            padding: 8px 18px;
+            font-size: 13px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        /* ── 컬러 메트릭 카드 ── */
+        .cpo-metrics-row {
+            display: flex;
+            gap: 10px;
+            margin: 12px 0 20px 0;
+            flex-wrap: wrap;
+        }
+        .cpo-metric-card {
+            flex: 1;
+            min-width: 120px;
             border-radius: 14px;
-            padding: 0.55rem 0.8rem;
+            padding: 14px 16px 12px;
+            border: 1px solid transparent;
+            position: relative;
+            overflow: hidden;
         }
-        div[data-testid="stMetricLabel"] {
+        .cpo-metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            border-radius: 14px 14px 0 0;
+        }
+        .cpo-metric-card .cpo-mc-label {
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.2px;
+            margin-bottom: 6px;
+        }
+        .cpo-metric-card .cpo-mc-value {
+            font-size: 26px;
+            font-weight: 800;
+            line-height: 1;
+        }
+        .cpo-metric-card .cpo-mc-unit {
+            font-size: 12px;
             font-weight: 600;
+            opacity: 0.7;
+            margin-left: 2px;
         }
-        div[data-testid="stMetricValue"] {
-            font-size: 1.55rem;
+        /* 색상 변형 */
+        .cpo-mc-total    { background:#f0f6ff; border-color:#bfdbfe; }
+        .cpo-mc-total::before    { background:#2563eb; }
+        .cpo-mc-total    .cpo-mc-label { color:#1e40af; }
+        .cpo-mc-total    .cpo-mc-value { color:#1e3a8a; }
+
+        .cpo-mc-reviewed { background:#f0fdf4; border-color:#bbf7d0; }
+        .cpo-mc-reviewed::before { background:#16a34a; }
+        .cpo-mc-reviewed .cpo-mc-label { color:#15803d; }
+        .cpo-mc-reviewed .cpo-mc-value { color:#14532d; }
+
+        .cpo-mc-consider { background:#fffbeb; border-color:#fde68a; }
+        .cpo-mc-consider::before { background:#d97706; }
+        .cpo-mc-consider .cpo-mc-label { color:#92400e; }
+        .cpo-mc-consider .cpo-mc-value { color:#78350f; }
+
+        .cpo-mc-selected { background:#ecfdf5; border-color:#6ee7b7; }
+        .cpo-mc-selected::before { background:#059669; }
+        .cpo-mc-selected .cpo-mc-label { color:#065f46; }
+        .cpo-mc-selected .cpo-mc-value { color:#064e3b; }
+
+        .cpo-mc-excluded { background:#fff1f2; border-color:#fecdd3; }
+        .cpo-mc-excluded::before { background:#dc2626; }
+        .cpo-mc-excluded .cpo-mc-label { color:#991b1b; }
+        .cpo-mc-excluded .cpo-mc-value { color:#7f1d1d; }
+
+        .cpo-mc-pending  { background:#f8fafc; border-color:#cbd5e1; }
+        .cpo-mc-pending::before  { background:#94a3b8; }
+        .cpo-mc-pending  .cpo-mc-label { color:#475569; }
+        .cpo-mc-pending  .cpo-mc-value { color:#334155; }
+
+        /* ── 리포트 패널 ── */
+        .cpo-report-panel {
+            background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
+            border-radius: 16px;
+            padding: 18px 22px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
         }
+        .cpo-report-panel-icon {
+            font-size: 28px;
+            flex-shrink: 0;
+        }
+        .cpo-report-panel-text {
+            flex: 1;
+        }
+        .cpo-report-panel-title {
+            font-size: 15px;
+            font-weight: 800;
+            color: #ffffff;
+        }
+        .cpo-report-panel-desc {
+            font-size: 12px;
+            color: rgba(255,255,255,0.75);
+            margin-top: 3px;
+        }
+
+        /* ── 필터 영역 ── */
+        .cpo-filter-area {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            padding: 14px 18px;
+            margin-bottom: 16px;
+        }
+
+        /* ── 섹션 헤딩 ── */
+        .cpo-step-title {
+            margin: 20px 0 12px 0;
+            padding: 0 0 10px 0;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        .cpo-step-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #2563eb, #3b82f6);
+            color: #ffffff;
+            font-weight: 800;
+            margin-right: 10px;
+            font-size: 14px;
+            vertical-align: middle;
+        }
+        .cpo-step-text {
+            display: inline-block;
+            font-size: 22px;
+            font-weight: 800;
+            color: #0f172a;
+            letter-spacing: -0.3px;
+            vertical-align: middle;
+        }
+        .cpo-step-help {
+            margin-top: 6px;
+            margin-left: 42px;
+            color: #64748b;
+            font-size: 13px;
+        }
+
+        /* ── 공통 텍스트 ── */
+        .cpo-inline-guide { padding: 0 0 8px 0; color: #64748b; font-size: 13px; line-height: 1.6; }
+        .cpo-inline-guide a { color: #2563eb; text-decoration: none; font-weight: 700; }
+        .cpo-page-note { margin: 2px 0 4px; color: #334155; font-size: 14px; font-weight: 600; }
+        .cpo-subtle-note { margin: 3px 0 8px; color: #64748b; font-size: 12px; }
+        .cpo-list-toolbar-label { margin-top: 8px; color: #334155; font-size: 13px; font-weight: 600; }
+
+        /* ── 상태 배지 ── */
+        .cpo-status-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+        .cpo-status-chip {
+            display: inline-flex; align-items: center; justify-content: center;
+            min-height: 28px; padding: 3px 12px; border-radius: 999px;
+            font-size: 12px; font-weight: 700; border: 1px solid transparent; white-space: nowrap;
+        }
+        .cpo-status-chip.neutral   { background:#f8fafc; color:#334155; border-color:#cbd5e1; }
+        .cpo-status-chip.submitted { background:#f8fafc; color:#475569; border-color:#cbd5e1; }
+        .cpo-status-chip.under-review    { background:#f5f3ff; color:#6d28d9; border-color:#ddd6fe; }
+        .cpo-status-chip.docs-requested  { background:#fff7ed; color:#c2410c; border-color:#fed7aa; }
+        .cpo-status-chip.reviewed        { background:#eff6ff; color:#1d4ed8; border-color:#bfdbfe; }
+        .cpo-status-chip.excluded        { background:#fef2f2; color:#b91c1c; border-color:#fecaca; }
+        .cpo-status-chip.selected        { background:#f0fdf4; color:#15803d; border-color:#bbf7d0; }
+        .cpo-status-current-row { margin: 4px 0 10px; }
+
+        /* ── 버튼 ── */
         div[data-testid="stButton"] > button,
         div[data-testid="stDownloadButton"] > button {
-            min-height: 42px;
-            font-weight: 600;
+            min-height: 40px; font-weight: 600; border-radius: 10px;
         }
+        /* ── 라벨 ── */
         div[data-testid="stTextInput"] label,
         div[data-testid="stSelectbox"] label,
         div[data-testid="stDateInput"] label,
         div[data-testid="stNumberInput"] label,
         div[data-testid="stTextArea"] label,
         div[data-testid="stCheckbox"] label,
-        div[data-testid="stRadio"] label {
-            font-weight: 600;
-        }
+        div[data-testid="stRadio"] label { font-weight: 600; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -1457,7 +1661,15 @@ def _render_application_edit_section(
     longitude_widget_key = _edit_widget_key(prefix, "longitude")
     selected_search_idx_widget_key = _edit_widget_key(prefix, "selected_search_idx")
 
-    st.markdown("#### 접수 정보 수정 · 삭제")
+    st.markdown(
+        """
+        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:12px 16px;margin:16px 0 8px;">
+          <span style="font-size:15px;font-weight:800;color:#c2410c;">✏️ 접수 정보 수정 · 삭제</span>
+          <span style="font-size:12px;color:#92400e;margin-left:10px;">주소 검색 후 반영 → 저장 버튼을 누르면 실제 DB에 반영됩니다.</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     with st.container(border=True):
         st.markdown("##### 점포 위치")
@@ -1765,9 +1977,27 @@ def _render_detail(
     station_map: Dict[str, Any],
     station_options: List[str],
 ):
-    st.markdown("### 점포 상세정보")
-    st.caption("선택한 접수건의 기본정보, 주소 수정, 검토 이력을 아래에서 이어서 확인합니다.")
-    st.markdown(f'<div class="cpo-status-current-row">현재 상태 {_status_badge_html(row.get("current_status"))}</div>', unsafe_allow_html=True)
+    # ── 상세 헤더 ──
+    biz_name = _safe_str(row.get("business_name")) or "미입력"
+    station_name = _safe_str(row.get("station_label")) or "-"
+    bd_header = _score_bd(row)
+    st.markdown(
+        f"""
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:16px 20px;margin-bottom:14px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+            <div>
+              <div style="font-size:20px;font-weight:800;color:#0f172a;">{biz_name}</div>
+              <div style="font-size:13px;color:#64748b;margin-top:3px;">관할: {station_name} &nbsp;·&nbsp; 접수: {_format_submitted_text(row.get("submitted_at"))}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              {_status_badge_html(row.get("current_status"))}
+              <span style="font-size:18px;font-weight:800;color:#1e3a8a;">{bd_header.get("total", 0)}점</span>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     _render_detail_summary_cards(row)
 
     c1, c2 = st.columns(2)
@@ -2018,9 +2248,23 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     station_label_options = _unique_station_options((station_options or []) + list(station_map.keys()))
 
     _inject_page_styles()
-    st.title("전남경찰청 CPO 관리시스템")
 
-    raw_rows = _fetch_rows(supabase)
+    raw_rows_for_header = _fetch_rows(supabase)
+    total_for_header = len(raw_rows_for_header)
+    st.markdown(
+        f"""
+        <div class="cpo-page-header">
+          <div>
+            <div class="cpo-page-header-title">🛡️ 전남경찰청 CPO 관리시스템</div>
+            <div class="cpo-page-header-sub">소상공인 방범물품 지원 신청 · 심사 · 선정 통합 관리</div>
+          </div>
+          <div class="cpo-page-header-badge">총 접수 {total_for_header:,}건</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    raw_rows = raw_rows_for_header  # 헤더에서 이미 조회됨
 
     today = date.today()
     default_from = today - timedelta(days=30)
@@ -2107,6 +2351,61 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
 
     _render_section_heading("3", "접수 목록 선택 · 다운로드", f"선택 {len(checked_export_rows)}건 / 조회 결과 {len(filtered_rows)}건")
 
+    # ── 위원회 리포트 패널 ──────────────────────────────────
+    precas_scores_for_report = compute_precas_scores_batch(filtered_rows)
+    consideration_rows = [
+        r for r in filtered_rows
+        if _status_label(r.get("current_status")) in ("선정고려", "선정")
+    ]
+    checked_rows_for_report = [
+        r for r in filtered_rows
+        if r.get("application_id") in st.session_state.get("list_checked_application_ids", [])
+    ]
+
+    st.markdown(
+        f"""
+        <div class="cpo-report-panel">
+          <div class="cpo-report-panel-icon">📋</div>
+          <div class="cpo-report-panel-text">
+            <div class="cpo-report-panel-title">위원회 심사 리포트 다운로드</div>
+            <div class="cpo-report-panel-desc">선정고려·선정 {len(consideration_rows)}건 | 현재 체크된 항목 {len(checked_rows_for_report)}건 · Word(.docx) 개별 파일을 ZIP으로 묶어 제공합니다.</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    report_col1, report_col2 = st.columns([3, 1])
+    with report_col1:
+        try:
+            zip_bytes = generate_report_zip(consideration_rows, precas_scores_for_report) if consideration_rows else b""
+        except Exception:
+            zip_bytes = b""
+        st.download_button(
+            f"📥 선정고려·선정 전체 ZIP ({len(consideration_rows)}건)",
+            data=zip_bytes,
+            file_name=f"위원회_리포트_{date_from.strftime('%Y%m%d')}_{date_to.strftime('%Y%m%d')}.zip",
+            mime="application/zip",
+            use_container_width=True,
+            disabled=not consideration_rows,
+            key="download_report_zip",
+        )
+    with report_col2:
+        try:
+            checked_zip = generate_report_zip(checked_rows_for_report, precas_scores_for_report) if checked_rows_for_report else b""
+        except Exception:
+            checked_zip = b""
+        st.download_button(
+            f"선택 건 ZIP ({len(checked_rows_for_report)}건)",
+            data=checked_zip,
+            file_name=f"선택리포트_{len(checked_rows_for_report)}건.zip",
+            mime="application/zip",
+            use_container_width=True,
+            disabled=not checked_rows_for_report,
+            key="download_checked_report_zip",
+        )
+
+    st.divider()
     list_title_col, list_select_all_col, list_clear_col, list_btn1_col, list_btn2_col = st.columns([4, 1, 1, 1, 1])
     with list_title_col:
         st.markdown('<div class="cpo-page-note">조회된 접수를 선택하고 바로 다운로드할 수 있습니다.</div>', unsafe_allow_html=True)
@@ -2204,4 +2503,3 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
             station_map=station_map,
             station_options=station_label_options,
         )
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
