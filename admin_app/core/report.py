@@ -308,11 +308,13 @@ def generate_report(
 
     if bd["has_precas"]:
         _add_score_line(right, "112신고", f"{_or(row.get('precas_112_count'))}건",
-                        bd['precas_112'], 16)
+                        bd['precas_112'], 14)
         _add_score_line(right, "위험도등급", f"{_or(row.get('precas_risk_grade'))}등급",
-                        bd['precas_risk'], 14)
+                        bd['precas_risk'], 12)
         _add_score_line(right, "탄력순찰", f"{_or(row.get('precas_patrol_count'))}회",
-                        bd['precas_patrol'], 10)
+                        bd['precas_patrol'], 8)
+        _add_score_line(right, "CCTV 대수", f"{_or(row.get('public_cctv_count'))}대",
+                        bd.get('precas_cctv', 0), 6)
     else:
         p_np = right.add_paragraph()
         _set_no_spacing(p_np)
@@ -516,4 +518,4 @@ def generate_report_zip(rows: List[Dict], precas_scores: Dict) -> bytes:
             safe_name = "".join(c for c in biz_name if c.isalnum() or c in "가-힣ㄱ-ㅎㅏ-ㅣ _-")
             filename = f"{rank:03d}_{safe_name}.docx"
             zf.writestr(filename, docx_bytes)
-    return buf.getvalue()
+    return buf.get

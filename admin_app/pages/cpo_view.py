@@ -920,7 +920,7 @@ def _build_export_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
                 "프리카스_112신고건수": row.get("precas_112_count"),
                 "프리카스_위험도등급": row.get("precas_risk_grade"),
                 "프리카스_탄력순찰수": row.get("precas_patrol_count"),
-                "프리카스_공공CCTV대수": row.get("public_cctv_count"),
+                "프리카스_CCTV대수": row.get("public_cctv_count"),
                 "프리카스점수": bd.get("precas_total", 0),
                 "환경조사점수": bd.get("field_total", 0),
                 "점포환경설문": bd.get("survey_env", 0),
@@ -1086,13 +1086,13 @@ def _render_score_guide():
   <td style="padding:7px 10px;font-weight:700;color:#1e40af;">① 치안현황 데이터</td>
   <td style="padding:7px 10px;text-align:center;font-weight:700;color:#1e40af;">40점</td>
   <td style="padding:7px 10px;color:#475569;">CPO 입력<br><span style="font-size:11px;">(경찰 내부 시스템 조회)</span></td>
-  <td style="padding:7px 10px;color:#334155;">112신고 건수 14점 · 범죄위험도 등급 12점 · 탄력순찰 횟수 8점 · 공공 CCTV 대수 6점<br><span style="font-size:11px;color:#64748b;">※ 4개 항목을 모두 입력해야 점수 산정. 경찰청 프리카스(PRECAS) 100m 격자 데이터 기준</span></td>
+  <td style="padding:7px 10px;color:#334155;">112신고 건수 14점 · 범죄위험도 등급 12점 · 탄력순찰 횟수 8점 · CCTV 대수 6점<br><span style="font-size:11px;color:#64748b;">※ 4개 항목을 모두 입력해야 점수 산정. 경찰청 프리카스(PRECAS) 100m 격자 데이터 기준</span></td>
 </tr>
 <tr>
   <td style="padding:7px 10px;font-weight:700;color:#1e3a8a;">② CPO 현장 안전평가</td>
   <td style="padding:7px 10px;text-align:center;font-weight:700;color:#1e3a8a;">20점</td>
   <td style="padding:7px 10px;color:#475569;">CPO 직접 입력<br><span style="font-size:11px;">(현장 방문 후 체크)</span></td>
-  <td style="padding:7px 10px;color:#334155;">주변환경 유형 · 점포 위치 유형 · 야간 조명 · 파출소 거리 · 취약시설 여부 · 심야 유동인구 · 건물 노후·고립도</td>
+  <td style="padding:7px 10px;color:#334155;">주변환경 유형 3점 · 점포 위치 유형 3점 · 야간 조명 2점 · 파출소 거리 4점 · 취약시설 4점 · 심야 유동인구 2점 · 건물 노후·고립도 2점<br><span style="font-size:11px;color:#64748b;">※ 7개 항목 원점수 합산 20점 만점</span></td>
 </tr>
 <tr style="background:#f0fdf4;">
   <td style="padding:7px 10px;font-weight:700;color:#15803d;">③ 점주 설문 응답</td>
@@ -2288,7 +2288,7 @@ def _validate_review_inputs(
     entered_count = sum(1 for x in precas_values if x != "")
 
     if 0 < entered_count < 4:
-        raise Exception("치안현황 점수는 112신고건수, 위험도등급, 탄력순찰수, 공공 CCTV 대수를 모두 입력해야 산정됩니다.")
+        raise Exception("치안현황 점수는 112신고건수, 위험도등급, 탄력순찰수, CCTV 대수를 모두 입력해야 산정됩니다.")
 
     if _safe_str(precas_risk_grade):
         risk_grade = _safe_int(precas_risk_grade, 0)
@@ -2298,7 +2298,7 @@ def _validate_review_inputs(
     if _safe_str(public_cctv_count):
         cctv_count = _safe_int(public_cctv_count, -1)
         if cctv_count < 0:
-            raise Exception("공공 CCTV 대수는 0 이상의 정수로 입력해주세요.")
+            raise Exception("CCTV 대수는 0 이상의 정수로 입력해주세요.")
 
     disc_score = _safe_float(cpo_discretionary_score, 0.0)
 
@@ -2461,7 +2461,7 @@ def _render_detail(
       </div>
     </div>
     <div style="font-size:11px;color:#64748b;margin-top:2px;">
-      치안현황 세부: 112신고 {bd.get('precas_112', 0)}점 · 위험도등급 {bd.get('precas_risk', 0)}점 · 탄력순찰 {bd.get('precas_patrol', 0)}점 · 공공CCTV {bd.get('precas_cctv', 0)}점
+      치안현황 세부: 112신고 {bd.get('precas_112', 0)}점 · 위험도등급 {bd.get('precas_risk', 0)}점 · 탄력순찰 {bd.get('precas_patrol', 0)}점 · CCTV {bd.get('precas_cctv', 0)}점
       &nbsp;|&nbsp; 위원회 평가 {bd.get('discretionary', 0)}점
     </div>
     """
@@ -2527,7 +2527,7 @@ def _render_detail(
             )
         with p4:
             public_cctv_count = st.text_input(
-                "공공 CCTV 대수",
+                "CCTV 대수",
                 value="" if row.get("public_cctv_count") is None else str(row.get("public_cctv_count")),
                 placeholder="예: 0, 2, 8",
             )
