@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from io import BytesIO
+from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -782,6 +783,91 @@ def _build_download_filename(
     status_part = _sanitize_filename_text(status_filter, fallback="all_status")
     date_part = f"{date_from.strftime('%Y%m%d')}_{date_to.strftime('%Y%m%d')}"
     return f"applications_{kind}_{station_part}_{status_part}_{date_part}_{row_count}건.xlsx"
+
+
+def _build_store_download_filename(selected_station: str, row_count: int) -> str:
+    station_part = _sanitize_filename_text(selected_station, fallback="all_station")
+    today_part = datetime.now().strftime("%Y%m%d")
+    return f"biz_stores_{station_part}_{today_part}_{row_count}건.xlsx"
+
+
+def _station_area_tokens(station_label: str) -> List[str]:
+    station_label = _safe_str(station_label)
+    area_name = ""
+    for area, label in JEONNAM_STATION_AREAS:
+        if label == station_label:
+            area_name = area
+            break
+    if not area_name and station_label.endswith("경찰서"):
+        area_name = station_label.replace("경찰서", "").strip()
+    if not area_name:
+        return []
+    return [area_name, f"{area_name}시", f"{area_name}군", f"{area_name}구"]
+
+
+@st.cache_data(show_spinner=False)
+def _load_biz_store_source_df() -> pd.DataFrame:
+    csv_path = Path(__file__).resolve().parents[2] / "jeonnam_stores.csv"
+    if not csv_path.exists():
+        return pd.DataFrame()
+
+    last_exc = None
+    for enc in ("utf-8-sig", "utf-8", "cp949", "euc-kr"):
+        try:
+            return pd.read_csv(csv_path, encoding=enc, low_memory=False)
+        except Exception as exc:
+            last_exc = exc
+
+    raise RuntimeError(f"점포 현황 CSV를 읽지 못했습니다: {last_exc}")
+
+
+def _filter_biz_store_df_by_station(store_df: pd.DataFrame, station_label: str) -> pd.DataFrame:
+    if store_df.empty:
+        return store_df
+
+    tokens = _station_area_tokens(station_label)
+    if not tokens:
+        return pd.DataFrame(columns=store_df.columns)
+
+    signgu_series = store_df.get("signguNm")
+    if signgu_series is not None:
+        signgu_text = signgu_series.fillna("").astype(str)
+        mask = signgu_text.isin(tokens)
+    else:
+        mask = pd.Series(False, index=store_df.index)
+
+    for col in ["rdnmAdr", "lnoAdr"]:
+        if col in store_df.columns:
+            address_text = store_df[col].fillna("").astype(str)
+            col_mask = pd.Series(False, index=store_df.index)
+            for token in tokens:
+                col_mask = col_mask | address_text.str.contains(token, regex=False)
+            mask = mask | col_mask
+
+    filtered = store_df.loc[mask].copy()
+    if filtered.empty:
+        return filtered
+
+    preferred_columns = [
+        ("bizesNm", "점포명"),
+        ("indsLclsNm", "대분류"),
+        ("indsMclsNm", "중분류"),
+        ("indsSclsNm", "소분류"),
+        ("signguNm", "시군"),
+        ("adongNm", "행정동"),
+        ("rdnmAdr", "도로명주소"),
+        ("lnoAdr", "지번주소"),
+        ("lon", "경도"),
+        ("lat", "위도"),
+    ]
+    export_data = {}
+    for source_col, label in preferred_columns:
+        if source_col in filtered.columns:
+            export_data[label] = filtered[source_col]
+
+    export_df = pd.DataFrame(export_data if export_data else filtered)
+    export_df = export_df.drop_duplicates().reset_index(drop=True)
+    return export_df
 
 
 def _bump_table_editor_nonce():
@@ -2784,6 +2870,47 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
             use_container_width=True,
             disabled=not checked_rows_for_report,
             key="download_checked_report_zip",
+        )
+
+    store_target_station = selected_station if role != "admin" else st.session_state.get("admin_station_filter", "전체")
+    biz_store_df = pd.DataFrame()
+    biz_store_error = ""
+    if _safe_str(store_target_station) not in ["", "전체"]:
+        try:
+            biz_store_df = _filter_biz_store_df_by_station(_load_biz_store_source_df(), store_target_station)
+        except Exception as exc:
+            biz_store_error = str(exc)
+
+    st.markdown(
+        f"""
+        <div class="cpo-report-panel" style="background:linear-gradient(135deg,#0f766e 0%,#0f9f8f 100%);">
+          <div class="cpo-report-panel-icon">🏪</div>
+          <div class="cpo-report-panel-text">
+            <div class="cpo-report-panel-title">관할 소상공인 점포 현황 다운로드</div>
+            <div class="cpo-report-panel-desc">현재 기준 관할: {store_target_station or '-'} · 관할 지역에 해당하는 점포 목록을 엑셀로 내려받습니다.</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    store_col1, store_col2 = st.columns([3, 1])
+    with store_col1:
+        if biz_store_error:
+            st.warning(f"점포 현황을 불러오지 못했습니다: {biz_store_error}")
+        elif _safe_str(store_target_station) in ["", "전체"]:
+            st.info("경찰서를 먼저 선택하면 해당 관할 점포 현황을 다운로드할 수 있습니다.")
+        else:
+            st.caption(f"{store_target_station} 관할 점포 현황 {len(biz_store_df)}건")
+    with store_col2:
+        st.download_button(
+            f"⬇ 점포 현황 ({len(biz_store_df)}건)",
+            data=_df_to_excel_bytes(biz_store_df) if not biz_store_df.empty else b"",
+            file_name=_build_store_download_filename(store_target_station, len(biz_store_df)),
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="download_biz_stores_by_station",
+            disabled=biz_store_df.empty,
         )
 
     # ── 목록 툴바 ──────────────────────────────────────────
