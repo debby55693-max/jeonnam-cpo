@@ -964,20 +964,54 @@ def _render_map(rows: List[Dict[str, Any]], selected_row: Optional[Dict[str, Any
 
 
 def _render_score_guide():
-    with st.expander("점수 산정 기준 보기", expanded=True):
+    with st.expander("📊 우선순위 점수 구성 보기", expanded=False):
         st.markdown(
             """
-**우선순위는 아래 항목을 합산하여 산정합니다.**
+<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px 20px;margin-bottom:8px;">
 
-**총점 = 프리카스 데이터(40점) + CPO 현장 환경조사(20점) + 신청인 설문(30점) + CPO 재량점수(10점)**
+<b style="font-size:14px;color:#0f172a;">총점 100점 = ① 치안현황 40점 + ② CPO 현장평가 20점 + ③ 점주 설문 30점 + ④ CPO 재량 10점</b>
 
-- **프리카스 데이터(40점)**: 112신고 건수 16점, 위험도 등급 14점, 탄력순찰 수 10점
-- **CPO 현장 환경조사(20점)**: 주변 환경, 위치, 조명, 파출소 거리, 취약시설, 공공 CCTV, 심야 유동인구, 건물 노후도
-- **신청인 설문(30점)**: 점포환경 7항목 25점 + 체감안전도 5문항 5점
-- **CPO 재량점수(10점)**: 객관지표 외 현장 위험도 반영. 5점 초과 시 사유 필수, 8점 이상 시 구체 사유 필수
+<hr style="border:none;border-top:1px solid #e2e8f0;margin:10px 0;">
 
-※ 프리카스 점수는 112신고건수, 위험도등급, 탄력순찰수를 모두 입력한 건만 상대평가로 산정됩니다.
-"""
+<table style="width:100%;border-collapse:collapse;font-size:13px;">
+<thead>
+<tr style="background:#1e3a8a;color:#fff;">
+  <th style="padding:7px 10px;text-align:left;border-radius:6px 0 0 0;">구분</th>
+  <th style="padding:7px 10px;text-align:center;">배점</th>
+  <th style="padding:7px 10px;text-align:left;">입력 주체</th>
+  <th style="padding:7px 10px;text-align:left;border-radius:0 6px 0 0;">세부 항목</th>
+</tr>
+</thead>
+<tbody>
+<tr style="background:#eff6ff;">
+  <td style="padding:7px 10px;font-weight:700;color:#1e40af;">① 치안현황 데이터</td>
+  <td style="padding:7px 10px;text-align:center;font-weight:700;color:#1e40af;">40점</td>
+  <td style="padding:7px 10px;color:#475569;">CPO 입력<br><span style="font-size:11px;">(경찰 내부 시스템 조회)</span></td>
+  <td style="padding:7px 10px;color:#334155;">112신고 건수 16점 · 범죄위험도 등급 14점 · 탄력순찰 횟수 10점<br><span style="font-size:11px;color:#64748b;">※ 3개 항목을 모두 입력해야 점수 산정. 경찰청 프리카스(PRECAS) 100m 격자 데이터 기준</span></td>
+</tr>
+<tr>
+  <td style="padding:7px 10px;font-weight:700;color:#1e3a8a;">② CPO 현장 안전평가</td>
+  <td style="padding:7px 10px;text-align:center;font-weight:700;color:#1e3a8a;">20점</td>
+  <td style="padding:7px 10px;color:#475569;">CPO 직접 입력<br><span style="font-size:11px;">(현장 방문 후 체크)</span></td>
+  <td style="padding:7px 10px;color:#334155;">주변환경 유형 · 점포 위치 유형 · 야간 조명 · 파출소 거리 · 취약시설 여부 · 공공CCTV 현황 · 심야 유동인구 · 건물 노후·고립도</td>
+</tr>
+<tr style="background:#f0fdf4;">
+  <td style="padding:7px 10px;font-weight:700;color:#15803d;">③ 점주 설문 응답</td>
+  <td style="padding:7px 10px;text-align:center;font-weight:700;color:#15803d;">30점</td>
+  <td style="padding:7px 10px;color:#475569;">점주 직접 입력<br><span style="font-size:11px;">(신청 설문지)</span></td>
+  <td style="padding:7px 10px;color:#334155;"><b>점포환경 응답 25점</b>: 범죄불안 경험·야간영업·주변환경·단독근무·CCTV 유무·비상벨·사설경비 등 7개 항목<br><b>안전체감도 5점</b>: 점주가 느끼는 체감 안전 관련 5문항 응답</td>
+</tr>
+<tr>
+  <td style="padding:7px 10px;font-weight:700;color:#92400e;">④ CPO 재량 가산</td>
+  <td style="padding:7px 10px;text-align:center;font-weight:700;color:#92400e;">10점</td>
+  <td style="padding:7px 10px;color:#475569;">CPO 판단 입력</td>
+  <td style="padding:7px 10px;color:#334155;">객관 지표 외 현장에서 체감한 위험도를 CPO가 직접 가산. <b>5점 초과 시 사유 입력 필수, 8점 이상은 구체 사유 10자 이상</b></td>
+</tr>
+</tbody>
+</table>
+</div>
+""",
+            unsafe_allow_html=True,
         )
 
 
@@ -1008,10 +1042,10 @@ def _render_priority_table(rows: List[Dict[str, Any]]):
                 "경찰서": _safe_str(row.get("station_label")),
                 "업종": _display_business_type(row),
                 "희망물품": _safe_str(row.get("requested_item")) or "-",
-                "프리카스": bd.get("precas_total", 0),
-                "환경조사": bd.get("field_total", 0),
-                "점포환경설문": bd.get("survey_env", 0),
-                "체감안전도": bd.get("felt_safety", 0),
+                "치안현황": bd.get("precas_total", 0),
+                "현장평가": bd.get("field_total", 0),
+                "점포환경응답": bd.get("survey_env", 0),
+                "안전체감도": bd.get("felt_safety", 0),
                 "CPO재량": bd.get("discretionary", 0),
                 "총점": bd.get("total", 0),
                 "상태": _status_display_text(row.get("current_status")),
@@ -1314,10 +1348,10 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
                 "위도": _format_coord(row.get("latitude")),
                 "경도": _format_coord(row.get("longitude")),
                 "희망물품": _safe_str(row.get("requested_item")) or "-",
-                "프리카스": _score_bd(row).get("precas_total", 0),
-                "환경조사": _score_bd(row).get("field_total", 0),
-                "점포환경설문": _score_bd(row).get("survey_env", 0),
-                "체감안전도": _score_bd(row).get("felt_safety", 0),
+                "치안현황": _score_bd(row).get("precas_total", 0),
+                "현장평가": _score_bd(row).get("field_total", 0),
+                "점포환경응답": _score_bd(row).get("survey_env", 0),
+                "안전체감도": _score_bd(row).get("felt_safety", 0),
                 "CPO재량": _score_bd(row).get("discretionary", 0),
                 "총점": _total_score(row),
                 "상태": _status_display_text(row.get("current_status")),
@@ -1342,10 +1376,10 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
             "위도",
             "경도",
             "희망물품",
-            "프리카스",
-            "환경조사",
-            "점포환경설문",
-            "체감안전도",
+            "치안현황",
+            "현장평가",
+            "점포환경응답",
+            "안전체감도",
             "CPO재량",
             "총점",
             "상태",
@@ -2039,19 +2073,35 @@ def _render_detail(
     st.markdown("#### 자동 산출 점수")
     bd = _score_bd(row)
 
-    a1, a2, a3, a4, a5 = st.columns(5)
-    a1.metric("프리카스", f"{bd.get('precas_total', 0)} / 40점")
-    a2.metric("환경조사", f"{bd.get('field_total', 0)} / 20점")
-    a3.metric("점포환경설문", f"{bd.get('survey_env', 0)} / 20점")
-    a4.metric("체감안전도", f"{bd.get('felt_safety', 0)} / 10점")
-    a5.metric("총점", f"{bd.get('total', 0)} / 100점")
-
-    st.caption(
-        f"프리카스 상세: 112 {bd.get('precas_112', 0)}점, "
-        f"위험등급 {bd.get('precas_risk', 0)}점, "
-        f"탄력순찰 {bd.get('precas_patrol', 0)}점 / "
-        f"CPO 재량 {bd.get('discretionary', 0)}점"
-    )
+    score_html = f"""
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:8px 0 4px;">
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:10px 12px;text-align:center;">
+        <div style="font-size:11px;font-weight:700;color:#1e40af;margin-bottom:4px;">① 치안현황</div>
+        <div style="font-size:20px;font-weight:800;color:#1e3a8a;">{bd.get('precas_total', 0)}<span style="font-size:11px;color:#3b82f6;">/40</span></div>
+      </div>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:10px 12px;text-align:center;">
+        <div style="font-size:11px;font-weight:700;color:#15803d;margin-bottom:4px;">② CPO 현장평가</div>
+        <div style="font-size:20px;font-weight:800;color:#14532d;">{bd.get('field_total', 0)}<span style="font-size:11px;color:#16a34a;">/20</span></div>
+      </div>
+      <div style="background:#fefce8;border:1px solid #fde68a;border-radius:12px;padding:10px 12px;text-align:center;">
+        <div style="font-size:11px;font-weight:700;color:#92400e;margin-bottom:4px;">점포환경 응답</div>
+        <div style="font-size:20px;font-weight:800;color:#78350f;">{bd.get('survey_env', 0)}<span style="font-size:11px;color:#d97706;">/25</span></div>
+      </div>
+      <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:10px 12px;text-align:center;">
+        <div style="font-size:11px;font-weight:700;color:#c2410c;margin-bottom:4px;">안전체감도</div>
+        <div style="font-size:20px;font-weight:800;color:#9a3412;">{bd.get('felt_safety', 0)}<span style="font-size:11px;color:#ea580c;">/5</span></div>
+      </div>
+      <div style="background:#1e3a8a;border-radius:12px;padding:10px 12px;text-align:center;">
+        <div style="font-size:11px;font-weight:700;color:#bfdbfe;margin-bottom:4px;">총 점</div>
+        <div style="font-size:22px;font-weight:800;color:#fff;">{bd.get('total', 0)}<span style="font-size:11px;color:#93c5fd;">/100</span></div>
+      </div>
+    </div>
+    <div style="font-size:11px;color:#64748b;margin-top:2px;">
+      치안현황 세부: 112신고 {bd.get('precas_112', 0)}점 · 위험도등급 {bd.get('precas_risk', 0)}점 · 탄력순찰 {bd.get('precas_patrol', 0)}점
+      &nbsp;|&nbsp; CPO 재량 {bd.get('discretionary', 0)}점
+    </div>
+    """
+    st.markdown(score_html, unsafe_allow_html=True)
 
 
     _render_application_edit_section(
@@ -2072,8 +2122,8 @@ def _render_detail(
         if review_status_default not in REVIEW_STATUS_OPTIONS:
             review_status_default = "검토완료"
 
-        st.markdown("##### 1. 프리카스 격자 데이터 입력")
-        st.caption("프리카스 100m 격자 기준 조회값을 입력합니다. 3개 값을 모두 입력한 경우에만 프리카스 40점이 산정됩니다.")
+        st.markdown("##### 1. 치안현황 데이터 입력 (경찰 내부 시스템)")
+        st.caption("경찰청 프리카스(PRECAS) 100m 격자 기준 조회값을 입력합니다. 3개 항목을 모두 입력해야 최대 40점이 산정됩니다.")
 
         p1, p2, p3 = st.columns(3)
         with p1:
@@ -2095,7 +2145,7 @@ def _render_detail(
                 placeholder="예: 0, 1, 5",
             )
 
-        st.markdown("##### 2. CPO 현장 환경조사 체크리스트")
+        st.markdown("##### 2. CPO 현장 안전평가 (현장 방문 후 입력)")
 
         f1, f2 = st.columns(2)
 
@@ -2151,7 +2201,7 @@ def _render_detail(
                 if row.get("field_building_condition") in FIELD_OPTIONS["field_building_condition"] else 0,
             )
 
-        st.markdown("##### 3. CPO 재량점수")
+        st.markdown("##### 3. CPO 재량 가산점 (객관 지표 외 현장 판단)")
         d1, d2 = st.columns([1, 3])
         with d1:
             cpo_discretionary_score = st.number_input(
@@ -2168,7 +2218,7 @@ def _render_detail(
                 placeholder="예: 인근 여성 1인 점포 밀집, 최근 반복 신고, 현장 체감 위험 높음 등",
             )
 
-        st.markdown("##### 4. 최종 검토 의견 및 상태")
+        st.markdown("##### 4. 최종 검토 의견 및 처리 상태")
         r1, r2 = st.columns(2)
         with r1:
             review_status = st.selectbox(
@@ -2405,24 +2455,34 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
             key="download_checked_report_zip",
         )
 
-    st.divider()
-    list_title_col, list_select_all_col, list_clear_col, list_btn1_col, list_btn2_col = st.columns([4, 1, 1, 1, 1])
-    with list_title_col:
-        st.markdown('<div class="cpo-page-note">조회된 접수를 선택하고 바로 다운로드할 수 있습니다.</div>', unsafe_allow_html=True)
-    with list_select_all_col:
-        st.write("")
-        if st.button("조회 결과 전체 선택", use_container_width=True, key="bulk_check_visible_rows"):
+    # ── 목록 툴바 ──────────────────────────────────────────
+    st.markdown(
+        f"""
+        <div style="background:#f0f6ff;border:1px solid #bfdbfe;border-radius:12px;
+                    padding:10px 16px;margin:8px 0 6px;display:flex;align-items:center;gap:8px;">
+          <span style="font-size:13px;font-weight:700;color:#1e40af;">📋 접수 목록</span>
+          <span style="font-size:12px;color:#3b82f6;">
+            조회 {len(filtered_rows)}건 · 체크 {len(checked_ids_for_download)}건
+          </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    tb_c1, tb_c2, tb_c3, tb_c4, tb_c5 = st.columns([2, 1, 1, 1.4, 1.4])
+    with tb_c1:
+        st.caption("목록에서 체크박스를 선택하면 하단 지도·상세 정보가 변경됩니다.")
+    with tb_c2:
+        if st.button("✅ 전체 선택", use_container_width=True, key="bulk_check_visible_rows"):
             _bulk_check_rows(filtered_rows)
             st.rerun()
-    with list_clear_col:
-        st.write("")
-        if st.button("선택 해제", use_container_width=True, key="bulk_clear_visible_rows"):
+    with tb_c3:
+        if st.button("☐ 선택 해제", use_container_width=True, key="bulk_clear_visible_rows"):
             _clear_checked_rows(filtered_rows)
             st.rerun()
-    with list_btn1_col:
-        st.write("")
+    with tb_c4:
         st.download_button(
-            "선택 항목 다운로드",
+            f"⬇ 체크 항목 ({len(checked_ids_for_download)}건)",
             data=_df_to_excel_bytes(checked_export_df) if not checked_export_df.empty else b"",
             file_name=checked_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2430,10 +2490,9 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
             key="download_checked_applications_top",
             disabled=checked_export_df.empty,
         )
-    with list_btn2_col:
-        st.write("")
+    with tb_c5:
         st.download_button(
-            "전체 결과 다운로드",
+            f"⬇ 전체 결과 ({len(filtered_rows)}건)",
             data=_df_to_excel_bytes(all_export_df) if not all_export_df.empty else b"",
             file_name=all_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
