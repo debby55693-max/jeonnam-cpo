@@ -518,4 +518,4 @@ def generate_report_zip(rows: List[Dict], precas_scores: Dict) -> bytes:
             safe_name = "".join(c for c in biz_name if c.isalnum() or c in "가-힣ㄱ-ㅎㅏ-ㅣ _-")
             filename = f"{rank:03d}_{safe_name}.docx"
             zf.writestr(filename, docx_bytes)
-    return buf.get
+    return buf.getvalue()

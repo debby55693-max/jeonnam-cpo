@@ -2846,8 +2846,9 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     with report_col1:
         try:
             zip_bytes = generate_report_zip(consideration_rows, precas_scores_for_report) if consideration_rows else b""
-        except Exception:
+        except Exception as e:
             zip_bytes = b""
+            st.error(f"리포트 생성 오류: {e}")
         st.download_button(
             f"📥 선정고려·선정 전체 ZIP ({len(consideration_rows)}건)",
             data=zip_bytes,
@@ -2860,8 +2861,9 @@ def cpo_page(supabase, role: str, station: str, station_options: List[str]):
     with report_col2:
         try:
             checked_zip = generate_report_zip(checked_rows_for_report, precas_scores_for_report) if checked_rows_for_report else b""
-        except Exception:
+        except Exception as e:
             checked_zip = b""
+            st.error(f"리포트 생성 오류: {e}")
         st.download_button(
             f"선택 건 ZIP ({len(checked_rows_for_report)}건)",
             data=checked_zip,
