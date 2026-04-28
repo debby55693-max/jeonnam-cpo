@@ -443,7 +443,7 @@ def generate_report(
                 _set_cell_bg(kc, "F8FAFC")
                 _set_cell_bg(vc, "F8FAFC")
 
-    # ── ⑤ 재량점수 + 최종 검토 의견 ────────────────────────
+    # ── ⑤ 위원회 평가 점수 + 최종 검토 의견 ─────────────────
     sp2 = doc.add_paragraph()
     sp2.paragraph_format.space_before = Pt(0)
     sp2.paragraph_format.space_after = Pt(3)
@@ -455,13 +455,13 @@ def generate_report(
     disc_cell.width = Cm(4.8)
     opinion_cell.width = Cm(13.8)
 
-    # 재량점수
+    # 위원회 평가 점수
     _set_cell_bg(disc_cell, "EEF2FA")
     dp = disc_cell.paragraphs[0]
     _set_no_spacing(dp)
     dp.paragraph_format.space_before = Pt(2)
     dp.paragraph_format.space_after = Pt(1)
-    _run(dp, "CPO 재량점수\n", size_pt=7.5, bold=True, color_hex="1E3A5F")
+    _run(dp, "위원회 평가 점수\n", size_pt=7.5, bold=True, color_hex="1E3A5F")
     _run(dp, f"{bd['discretionary']}점 / 10점", size_pt=9, bold=True, color_hex="1E3A5F")
 
     disc_reason = _or(bd.get("discretionary_reason"))

@@ -72,6 +72,12 @@ COMMON_SALES_BANDS = [
     "1억원 초과 ~ 2억원 이하",
     "2억원 초과",
 ]
+COMMON_REQUESTED_ITEMS = [
+    "",
+    "비상벨 + 경광등",
+    "호신용품 세트",
+    "방범 강화키트",
+]
 JEONNAM_STATION_AREAS = [
     ("목포", "목포경찰서"),
     ("여수", "여수경찰서"),
@@ -827,7 +833,7 @@ def _build_export_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
                 "환경조사점수": bd.get("field_total", 0),
                 "점포환경설문": bd.get("survey_env", 0),
                 "체감안전도": bd.get("felt_safety", 0),
-                "CPO재량점수": bd.get("discretionary", 0),
+                "위원회평가점수": bd.get("discretionary", 0),
                 "총점": bd.get("total", 0),
                 "범죄불안경험": _safe_str(row.get("survey_crime_anxiety")),
                 "야간영업여부": _safe_str(row.get("survey_late_night")),
@@ -843,7 +849,7 @@ def _build_export_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
                 "검토의견": _safe_str(row.get("review_comment")),
                 "추가서류요청내용": _safe_str(row.get("docs_request_comment")),
                 "제외사유": _safe_str(row.get("exclude_reason")),
-                "CPO재량사유": _safe_str(row.get("cpo_discretionary_reason")),
+                "위원회평가사유": _safe_str(row.get("cpo_discretionary_reason")),
             }
         )
     return pd.DataFrame(data)
@@ -970,7 +976,7 @@ def _render_score_guide():
             """
 <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px 20px;margin-bottom:8px;">
 
-<b style="font-size:14px;color:#0f172a;">총점 100점 = ① 치안현황 40점 + ② CPO 현장평가 20점 + ③ 점주 설문 30점 + ④ CPO 재량 10점</b>
+<b style="font-size:14px;color:#0f172a;">총점 100점 = ① 치안현황 40점 + ② CPO 현장평가 20점 + ③ 점주 설문 30점 + ④ 위원회 평가 점수 10점</b>
 
 <hr style="border:none;border-top:1px solid #e2e8f0;margin:10px 0;">
 
@@ -1003,10 +1009,10 @@ def _render_score_guide():
   <td style="padding:7px 10px;color:#334155;"><b>점포환경 응답 25점</b>: 범죄불안 경험·야간영업·주변환경·단독근무·CCTV 유무·비상벨·사설경비 등 7개 항목<br><b>안전체감도 5점</b>: 점주가 느끼는 체감 안전 관련 5문항 응답</td>
 </tr>
 <tr>
-  <td style="padding:7px 10px;font-weight:700;color:#92400e;">④ CPO 재량 가산</td>
+  <td style="padding:7px 10px;font-weight:700;color:#92400e;">④ 위원회 평가 점수</td>
   <td style="padding:7px 10px;text-align:center;font-weight:700;color:#92400e;">10점</td>
-  <td style="padding:7px 10px;color:#475569;">CPO 판단 입력</td>
-  <td style="padding:7px 10px;color:#334155;">객관 지표 외 현장에서 체감한 위험도를 CPO가 직접 가산. <b>5점 초과 시 사유 입력 필수, 8점 이상은 구체 사유 10자 이상</b></td>
+  <td style="padding:7px 10px;color:#475569;">위원회 검토 반영</td>
+  <td style="padding:7px 10px;color:#334155;">객관 지표 외 위원회 검토 의견을 반영하는 점수. <b>5점 초과 시 사유 입력 필수, 8점 이상은 구체 사유 10자 이상</b></td>
 </tr>
 </tbody>
 </table>
@@ -1047,7 +1053,7 @@ def _render_priority_table(rows: List[Dict[str, Any]]):
                 "현장평가": bd.get("field_total", 0),
                 "점포환경응답": bd.get("survey_env", 0),
                 "안전체감도": bd.get("felt_safety", 0),
-                "CPO재량": bd.get("discretionary", 0),
+                "위원회평가": bd.get("discretionary", 0),
                 "총점": bd.get("total", 0),
                 "상태": _status_display_text(row.get("current_status")),
             }
@@ -1353,7 +1359,7 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
                 "현장평가": _score_bd(row).get("field_total", 0),
                 "점포환경응답": _score_bd(row).get("survey_env", 0),
                 "안전체감도": _score_bd(row).get("felt_safety", 0),
-                "CPO재량": _score_bd(row).get("discretionary", 0),
+                "위원회평가": _score_bd(row).get("discretionary", 0),
                 "총점": _total_score(row),
                 "상태": _status_display_text(row.get("current_status")),
             }
@@ -1381,7 +1387,7 @@ def _render_list_table(rows: List[Dict[str, Any]]) -> List[Any]:
             "현장평가",
             "점포환경응답",
             "안전체감도",
-            "CPO재량",
+            "위원회평가",
             "총점",
             "상태",
         ],
@@ -1606,6 +1612,7 @@ def _ensure_edit_state(row: Dict[str, Any], station_options: List[str]):
         f"{prefix}business_type_other": _safe_str(row.get("business_type_other")),
         f"{prefix}annual_sales": _safe_int(row.get("annual_sales"), 0),
         f"{prefix}sales_band": _safe_str(row.get("sales_band")) or "",
+        f"{prefix}requested_item": _safe_str(row.get("requested_item")) or "",
         f"{prefix}station_label": current_station_label if current_station_label in station_options else "",
         f"{prefix}address_query": _safe_str(row.get("address_road")),
         f"{prefix}resolved_address": _safe_str(row.get("address_road")),
@@ -1690,6 +1697,11 @@ def _render_application_edit_section(
     sales_band_options = COMMON_SALES_BANDS.copy()
     if current_sales_band and current_sales_band not in sales_band_options:
         sales_band_options.append(current_sales_band)
+
+    current_requested_item = _safe_str(row.get("requested_item"))
+    requested_item_options = COMMON_REQUESTED_ITEMS.copy()
+    if current_requested_item and current_requested_item not in requested_item_options:
+        requested_item_options.append(current_requested_item)
 
     station_label_options = [""] + [label for label in station_options if label]
     current_station_label = _safe_str(row.get("station_label"))
@@ -1825,6 +1837,12 @@ def _render_application_edit_section(
             index=sales_band_options.index(st.session_state.get(f"{prefix}sales_band", "")) if st.session_state.get(f"{prefix}sales_band", "") in sales_band_options else 0,
             key=f"{prefix}sales_band",
         )
+        st.selectbox(
+            "희망물품",
+            requested_item_options,
+            index=requested_item_options.index(st.session_state.get(f"{prefix}requested_item", "")) if st.session_state.get(f"{prefix}requested_item", "") in requested_item_options else 0,
+            key=f"{prefix}requested_item",
+        )
 
     with c2:
         current_station_widget_value = _safe_str(st.session_state.get(station_label_widget_key))
@@ -1874,6 +1892,7 @@ def _render_application_edit_section(
                 "business_type_other": _safe_str(st.session_state.get(f"{prefix}business_type_other")) or None,
                 "annual_sales": int(_safe_int(st.session_state.get(f"{prefix}annual_sales"), 0)),
                 "sales_band": _safe_str(st.session_state.get(f"{prefix}sales_band")) or None,
+                "requested_item": _safe_str(st.session_state.get(f"{prefix}requested_item")) or None,
                 "address_road": final_address or None,
                 "address_detail": _safe_str(st.session_state.get(f"{prefix}address_detail")) or None,
                 "latitude": lat_to_save,
@@ -2011,13 +2030,13 @@ def _validate_review_inputs(
     disc_score = _safe_float(cpo_discretionary_score, 0.0)
 
     if disc_score < 0 or disc_score > 10:
-        raise Exception("CPO 재량점수는 0~10점 사이로 입력해주세요.")
+        raise Exception("위원회 평가 점수는 0~10점 사이로 입력해주세요.")
 
     if disc_score > 5 and not _safe_str(cpo_discretionary_reason):
-        raise Exception("CPO 재량점수가 5점을 초과하면 사유를 입력해야 합니다.")
+        raise Exception("위원회 평가 점수가 5점을 초과하면 사유를 입력해야 합니다.")
 
     if disc_score >= 8 and len(_safe_str(cpo_discretionary_reason)) < 10:
-        raise Exception("CPO 재량점수가 8점 이상이면 구체 사유를 10자 이상 입력해주세요.")
+        raise Exception("위원회 평가 점수가 8점 이상이면 구체 사유를 10자 이상 입력해주세요.")
 
 
 def _render_detail(
@@ -2115,7 +2134,7 @@ def _render_detail(
     </div>
     <div style="font-size:11px;color:#64748b;margin-top:2px;">
       치안현황 세부: 112신고 {bd.get('precas_112', 0)}점 · 위험도등급 {bd.get('precas_risk', 0)}점 · 탄력순찰 {bd.get('precas_patrol', 0)}점 · 공공CCTV {bd.get('precas_cctv', 0)}점
-      &nbsp;|&nbsp; CPO 재량 {bd.get('discretionary', 0)}점
+      &nbsp;|&nbsp; 위원회 평가 {bd.get('discretionary', 0)}점
     </div>
     """
     st.markdown(score_html, unsafe_allow_html=True)
@@ -2218,11 +2237,11 @@ def _render_detail(
                 if row.get("field_building_condition") in FIELD_OPTIONS["field_building_condition"] else 0,
             )
 
-        st.markdown("##### 3. CPO 재량 가산점 (객관 지표 외 현장 판단)")
+        st.markdown("##### 3. 위원회 평가 점수 (객관 지표 외 위원회 검토 반영)")
         d1, d2 = st.columns([1, 3])
         with d1:
             cpo_discretionary_score = st.number_input(
-                "재량점수(0~10)",
+                "위원회 평가 점수(0~10)",
                 min_value=0.0,
                 max_value=10.0,
                 step=1.0,
@@ -2230,7 +2249,7 @@ def _render_detail(
             )
         with d2:
             cpo_discretionary_reason = st.text_input(
-                "재량점수 사유",
+                "위원회 평가 사유",
                 value=_safe_str(row.get("cpo_discretionary_reason")),
                 placeholder="예: 인근 여성 1인 점포 밀집, 최근 반복 신고, 현장 체감 위험 높음 등",
             )
