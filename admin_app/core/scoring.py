@@ -18,11 +18,12 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 
-PRECAS_112_MAX = 16
-PRECAS_RISK_MAX = 14
-PRECAS_PATROL_MAX = 10
+PRECAS_112_MAX = 14
+PRECAS_RISK_MAX = 12
+PRECAS_PATROL_MAX = 8
+PRECAS_CCTV_MAX = 6
 
-FIELD_SURVEY_RAW_MAX = 23
+FIELD_SURVEY_RAW_MAX = 20
 FIELD_SURVEY_MAX = 20
 
 
@@ -61,6 +62,7 @@ def _has_complete_precas(row: Dict[str, Any]) -> bool:
         _has_value(row.get("precas_112_count"))
         and _has_value(row.get("precas_risk_grade"))
         and _has_value(row.get("precas_patrol_count"))
+        and _has_value(row.get("public_cctv_count"))
     )
 
 
@@ -96,6 +98,7 @@ def compute_precas_scores_batch(all_rows: List[Dict[str, Any]]) -> Dict[Any, Dic
     counts_112 = [_safe_float(r.get("precas_112_count"), 0.0) for r in valid_rows]
     risk_grades = [_safe_float(r.get("precas_risk_grade"), 9.0) for r in valid_rows]
     patrol_counts = [_safe_float(r.get("precas_patrol_count"), 0.0) for r in valid_rows]
+    public_cctv_counts = [_safe_float(r.get("public_cctv_count"), 0.0) for r in valid_rows]
 
     result: Dict[Any, Dict[str, Any]] = {}
 
@@ -105,19 +108,23 @@ def compute_precas_scores_batch(all_rows: List[Dict[str, Any]]) -> Dict[Any, Dic
         p112 = _percentile(counts_112[i], counts_112, higher_is_risk=True)
         prisk = _percentile(risk_grades[i], risk_grades, higher_is_risk=False)
         ppatrol = _percentile(patrol_counts[i], patrol_counts, higher_is_risk=False)
+        pcctv = _percentile(public_cctv_counts[i], public_cctv_counts, higher_is_risk=False)
 
         s112 = round(p112 * PRECAS_112_MAX, 1)
         srisk = round(prisk * PRECAS_RISK_MAX, 1)
         spatrol = round(ppatrol * PRECAS_PATROL_MAX, 1)
+        scctv = round(pcctv * PRECAS_CCTV_MAX, 1)
 
         result[app_id] = {
             "score_112": s112,
             "score_risk": srisk,
             "score_patrol": spatrol,
-            "total": round(s112 + srisk + spatrol, 1),
+            "score_cctv": scctv,
+            "total": round(s112 + srisk + spatrol + scctv, 1),
             "pct_112": round(p112 * 100, 1),
             "pct_risk": round(prisk * 100, 1),
             "pct_patrol": round(ppatrol * 100, 1),
+            "pct_cctv": round(pcctv * 100, 1),
             "has_data": True,
         }
 
@@ -175,15 +182,6 @@ FIELD_SCORING: Dict[str, Dict[str, Any]] = {
             "없음": 0,
         },
     },
-    "field_public_cctv": {
-        "label": "공공 CCTV 현황",
-        "max": 3,
-        "scores": {
-            "없음": 3,
-            "1~2대": 1,
-            "다수 설치": 0,
-        },
-    },
     "field_foot_traffic": {
         "label": "심야 유동인구",
         "max": 2,
@@ -226,7 +224,6 @@ FIELD_OPTIONS: Dict[str, List[str]] = {
     "field_lighting": ["미입력", "불량(어두움)", "보통", "양호"],
     "field_police_distance": ["미입력", "10분 이상", "5~10분", "3분 이내"],
     "field_vulnerable_facilities": ["미입력", "유흥업소·숙박업소 인접", "일부 있음", "없음"],
-    "field_public_cctv": ["미입력", "없음", "1~2대", "다수 설치"],
     "field_foot_traffic": ["미입력", "매우 적음", "보통", "많음"],
     "field_building_condition": ["미입력", "노후·고립", "보통", "양호"],
 }
@@ -242,11 +239,10 @@ def compute_field_raw_score(row: Dict[str, Any]) -> int:
 
 def compute_field_survey_score(row: Dict[str, Any]) -> float:
     """
-    환경조사 원점수 23점을 20점 만점으로 환산.
-    cap 방식보다 변별력이 좋음.
+    환경조사 원점수 20점을 그대로 20점 만점으로 사용.
     """
     raw = compute_field_raw_score(row)
-    return round(raw / FIELD_SURVEY_RAW_MAX * FIELD_SURVEY_MAX, 1)
+    return round(max(0.0, min(float(FIELD_SURVEY_MAX), float(raw))), 1)
 
 
 def field_survey_detail(row: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -417,9 +413,11 @@ def score_breakdown(row: Dict[str, Any], precas_scores: Dict[Any, Dict[str, Any]
         "precas_112": _safe_float(precas_info.get("score_112"), 0.0),
         "precas_risk": _safe_float(precas_info.get("score_risk"), 0.0),
         "precas_patrol": _safe_float(precas_info.get("score_patrol"), 0.0),
+        "precas_cctv": _safe_float(precas_info.get("score_cctv"), 0.0),
         "pct_112": precas_info.get("pct_112"),
         "pct_risk": precas_info.get("pct_risk"),
         "pct_patrol": precas_info.get("pct_patrol"),
+        "pct_cctv": precas_info.get("pct_cctv"),
         "has_precas": bool(precas_info.get("has_data")),
 
         "field_raw": field_raw,

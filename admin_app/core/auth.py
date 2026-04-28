@@ -30,7 +30,7 @@ def _load_station_label(supabase, station_id):
     try:
         resp = (
             supabase.table("stations")
-            .select("id, station_name, station_label")
+            .select("id, station_label")
             .eq("id", station_id)
             .limit(1)
             .execute()
@@ -38,7 +38,7 @@ def _load_station_label(supabase, station_id):
         row = resp.data[0] if resp.data else None
         if not row:
             return ""
-        return (row.get("station_label") or row.get("station_name") or "").strip()
+        return (row.get("station_label") or "").strip()
     except Exception:
         return ""
 

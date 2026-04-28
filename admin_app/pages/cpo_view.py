@@ -822,6 +822,7 @@ def _build_export_df(rows: List[Dict[str, Any]]) -> pd.DataFrame:
                 "프리카스_112신고건수": row.get("precas_112_count"),
                 "프리카스_위험도등급": row.get("precas_risk_grade"),
                 "프리카스_탄력순찰수": row.get("precas_patrol_count"),
+                "프리카스_공공CCTV대수": row.get("public_cctv_count"),
                 "프리카스점수": bd.get("precas_total", 0),
                 "환경조사점수": bd.get("field_total", 0),
                 "점포환경설문": bd.get("survey_env", 0),
@@ -987,13 +988,13 @@ def _render_score_guide():
   <td style="padding:7px 10px;font-weight:700;color:#1e40af;">① 치안현황 데이터</td>
   <td style="padding:7px 10px;text-align:center;font-weight:700;color:#1e40af;">40점</td>
   <td style="padding:7px 10px;color:#475569;">CPO 입력<br><span style="font-size:11px;">(경찰 내부 시스템 조회)</span></td>
-  <td style="padding:7px 10px;color:#334155;">112신고 건수 16점 · 범죄위험도 등급 14점 · 탄력순찰 횟수 10점<br><span style="font-size:11px;color:#64748b;">※ 3개 항목을 모두 입력해야 점수 산정. 경찰청 프리카스(PRECAS) 100m 격자 데이터 기준</span></td>
+  <td style="padding:7px 10px;color:#334155;">112신고 건수 14점 · 범죄위험도 등급 12점 · 탄력순찰 횟수 8점 · 공공 CCTV 대수 6점<br><span style="font-size:11px;color:#64748b;">※ 4개 항목을 모두 입력해야 점수 산정. 경찰청 프리카스(PRECAS) 100m 격자 데이터 기준</span></td>
 </tr>
 <tr>
   <td style="padding:7px 10px;font-weight:700;color:#1e3a8a;">② CPO 현장 안전평가</td>
   <td style="padding:7px 10px;text-align:center;font-weight:700;color:#1e3a8a;">20점</td>
   <td style="padding:7px 10px;color:#475569;">CPO 직접 입력<br><span style="font-size:11px;">(현장 방문 후 체크)</span></td>
-  <td style="padding:7px 10px;color:#334155;">주변환경 유형 · 점포 위치 유형 · 야간 조명 · 파출소 거리 · 취약시설 여부 · 공공CCTV 현황 · 심야 유동인구 · 건물 노후·고립도</td>
+  <td style="padding:7px 10px;color:#334155;">주변환경 유형 · 점포 위치 유형 · 야간 조명 · 파출소 거리 · 취약시설 여부 · 심야 유동인구 · 건물 노후·고립도</td>
 </tr>
 <tr style="background:#f0fdf4;">
   <td style="padding:7px 10px;font-weight:700;color:#15803d;">③ 점주 설문 응답</td>
@@ -1442,6 +1443,15 @@ def _to_nullable_float(value: Any) -> Optional[float]:
         return None
 
 
+def _to_bounded_int(value: Any, default: int = 0, min_value: Optional[int] = None, max_value: Optional[int] = None) -> int:
+    number = _safe_int(value, default)
+    if min_value is not None:
+        number = max(min_value, number)
+    if max_value is not None:
+        number = min(max_value, number)
+    return number
+
+
 def _normalize_field_value(value: Any) -> Optional[str]:
     text = _safe_str(value)
     if not text or text == "미입력":
@@ -1462,12 +1472,12 @@ def _save_review(
     precas_112_count: Any,
     precas_risk_grade: Any,
     precas_patrol_count: Any,
+    public_cctv_count: Any,
     field_neighborhood_type: str,
     field_location_type: str,
     field_lighting: str,
     field_police_distance: str,
     field_vulnerable_facilities: str,
-    field_public_cctv: str,
     field_foot_traffic: str,
     field_building_condition: str,
     cpo_discretionary_score: Any,
@@ -1488,7 +1498,7 @@ def _save_review(
 
         # 예전 컬럼 호환용: 새 점수체계에서는 사용하지 않음
         "cpo_risk_label": None,
-        "cpo_risk_score": None,
+        "cpo_risk_score": 0,
 
         "is_excluded": final_excluded,
         "exclude_reason": _safe_str(exclude_reason),
@@ -1500,6 +1510,7 @@ def _save_review(
         "precas_112_count": _to_nullable_int(precas_112_count),
         "precas_risk_grade": _to_nullable_int(precas_risk_grade),
         "precas_patrol_count": _to_nullable_int(precas_patrol_count),
+        "public_cctv_count": _to_nullable_int(public_cctv_count),
 
         # CPO 현장 환경조사
         "field_neighborhood_type": _normalize_field_value(field_neighborhood_type),
@@ -1507,12 +1518,11 @@ def _save_review(
         "field_lighting": _normalize_field_value(field_lighting),
         "field_police_distance": _normalize_field_value(field_police_distance),
         "field_vulnerable_facilities": _normalize_field_value(field_vulnerable_facilities),
-        "field_public_cctv": _normalize_field_value(field_public_cctv),
         "field_foot_traffic": _normalize_field_value(field_foot_traffic),
         "field_building_condition": _normalize_field_value(field_building_condition),
 
         # CPO 재량
-        "cpo_discretionary_score": _to_nullable_float(cpo_discretionary_score) or 0,
+        "cpo_discretionary_score": _to_bounded_int(cpo_discretionary_score, default=0, min_value=0, max_value=10),
         "cpo_discretionary_reason": _safe_str(cpo_discretionary_reason),
     }
 
@@ -1967,6 +1977,7 @@ def _validate_review_inputs(
     precas_112_count: Any,
     precas_risk_grade: Any,
     precas_patrol_count: Any,
+    public_cctv_count: Any,
     cpo_discretionary_score: Any,
     cpo_discretionary_reason: str,
 ):
@@ -1980,16 +1991,22 @@ def _validate_review_inputs(
         _safe_str(precas_112_count),
         _safe_str(precas_risk_grade),
         _safe_str(precas_patrol_count),
+        _safe_str(public_cctv_count),
     ]
     entered_count = sum(1 for x in precas_values if x != "")
 
-    if 0 < entered_count < 3:
-        raise Exception("프리카스 점수는 112신고건수, 위험도등급, 탄력순찰수를 모두 입력해야 산정됩니다.")
+    if 0 < entered_count < 4:
+        raise Exception("치안현황 점수는 112신고건수, 위험도등급, 탄력순찰수, 공공 CCTV 대수를 모두 입력해야 산정됩니다.")
 
     if _safe_str(precas_risk_grade):
         risk_grade = _safe_int(precas_risk_grade, 0)
         if risk_grade < 1 or risk_grade > 9:
             raise Exception("프리카스 위험도 등급은 1~9 사이로 입력해주세요.")
+
+    if _safe_str(public_cctv_count):
+        cctv_count = _safe_int(public_cctv_count, -1)
+        if cctv_count < 0:
+            raise Exception("공공 CCTV 대수는 0 이상의 정수로 입력해주세요.")
 
     disc_score = _safe_float(cpo_discretionary_score, 0.0)
 
@@ -2097,7 +2114,7 @@ def _render_detail(
       </div>
     </div>
     <div style="font-size:11px;color:#64748b;margin-top:2px;">
-      치안현황 세부: 112신고 {bd.get('precas_112', 0)}점 · 위험도등급 {bd.get('precas_risk', 0)}점 · 탄력순찰 {bd.get('precas_patrol', 0)}점
+      치안현황 세부: 112신고 {bd.get('precas_112', 0)}점 · 위험도등급 {bd.get('precas_risk', 0)}점 · 탄력순찰 {bd.get('precas_patrol', 0)}점 · 공공CCTV {bd.get('precas_cctv', 0)}점
       &nbsp;|&nbsp; CPO 재량 {bd.get('discretionary', 0)}점
     </div>
     """
@@ -2123,9 +2140,9 @@ def _render_detail(
             review_status_default = "검토완료"
 
         st.markdown("##### 1. 치안현황 데이터 입력 (경찰 내부 시스템)")
-        st.caption("경찰청 프리카스(PRECAS) 100m 격자 기준 조회값을 입력합니다. 3개 항목을 모두 입력해야 최대 40점이 산정됩니다.")
+        st.caption("경찰청 프리카스(PRECAS) 100m 격자 기준 조회값을 입력합니다. 4개 항목을 모두 입력해야 최대 40점이 산정됩니다.")
 
-        p1, p2, p3 = st.columns(3)
+        p1, p2, p3, p4 = st.columns(4)
         with p1:
             precas_112_count = st.text_input(
                 "112신고 건수",
@@ -2143,6 +2160,12 @@ def _render_detail(
                 "탄력순찰 수",
                 value="" if row.get("precas_patrol_count") is None else str(row.get("precas_patrol_count")),
                 placeholder="예: 0, 1, 5",
+            )
+        with p4:
+            public_cctv_count = st.text_input(
+                "공공 CCTV 대수",
+                value="" if row.get("public_cctv_count") is None else str(row.get("public_cctv_count")),
+                placeholder="예: 0, 2, 8",
             )
 
         st.markdown("##### 2. CPO 현장 안전평가 (현장 방문 후 입력)")
@@ -2182,12 +2205,6 @@ def _render_detail(
                 index=FIELD_OPTIONS["field_vulnerable_facilities"].index(row.get("field_vulnerable_facilities"))
                 if row.get("field_vulnerable_facilities") in FIELD_OPTIONS["field_vulnerable_facilities"] else 0,
             )
-            field_public_cctv = st.selectbox(
-                "공공 CCTV 현황",
-                FIELD_OPTIONS["field_public_cctv"],
-                index=FIELD_OPTIONS["field_public_cctv"].index(row.get("field_public_cctv"))
-                if row.get("field_public_cctv") in FIELD_OPTIONS["field_public_cctv"] else 0,
-            )
             field_foot_traffic = st.selectbox(
                 "심야 유동인구",
                 FIELD_OPTIONS["field_foot_traffic"],
@@ -2208,7 +2225,7 @@ def _render_detail(
                 "재량점수(0~10)",
                 min_value=0.0,
                 max_value=10.0,
-                step=0.5,
+                step=1.0,
                 value=float(_safe_float(row.get("cpo_discretionary_score"), 0.0)),
             )
         with d2:
@@ -2253,6 +2270,7 @@ def _render_detail(
                     precas_112_count=precas_112_count,
                     precas_risk_grade=precas_risk_grade,
                     precas_patrol_count=precas_patrol_count,
+                    public_cctv_count=public_cctv_count,
                     cpo_discretionary_score=cpo_discretionary_score,
                     cpo_discretionary_reason=cpo_discretionary_reason,
                 )
@@ -2270,12 +2288,12 @@ def _render_detail(
                     precas_112_count=precas_112_count,
                     precas_risk_grade=precas_risk_grade,
                     precas_patrol_count=precas_patrol_count,
+                    public_cctv_count=public_cctv_count,
                     field_neighborhood_type=field_neighborhood_type,
                     field_location_type=field_location_type,
                     field_lighting=field_lighting,
                     field_police_distance=field_police_distance,
                     field_vulnerable_facilities=field_vulnerable_facilities,
-                    field_public_cctv=field_public_cctv,
                     field_foot_traffic=field_foot_traffic,
                     field_building_condition=field_building_condition,
                     cpo_discretionary_score=cpo_discretionary_score,
