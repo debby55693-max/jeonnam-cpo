@@ -1,8 +1,8 @@
 /* ── 지원 물품 선택 (전역 함수 - HTML onclick에서 호출) ── */
 const _ITEM_LABELS = {
-  bell: "비상벨 + 경광등",
-  self: "호신용품 세트",
-  kit:  "방범 강화키트",
+  bell: "점포 범죄예방 물품",
+  self: "개인호신용품 세트",
+  kit:  "점포 보안강화 키트",
 };
 
 function selectItem(key) {
